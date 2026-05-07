@@ -17,6 +17,7 @@ COPY . .
 
 EXPOSE 8000
 
-# Railway y otros servicios usan la variable de entorno $PORT
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Comando de inicio: Railway inyecta la variable $PORT. 
+# Usamos shell form para que se expanda la variable.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level debug
 
