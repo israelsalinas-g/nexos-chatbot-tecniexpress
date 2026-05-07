@@ -11,5 +11,4 @@ def search_and_format(parsed: dict) -> str | None:
     if not results:
         return None
 
-    # Devolvemos el resultado más relevante (ya viene ordenado por rank)
     return format_manual_result(results[0], parsed)

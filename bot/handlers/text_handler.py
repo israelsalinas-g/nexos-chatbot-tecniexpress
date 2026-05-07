@@ -6,7 +6,6 @@ logger = logging.getLogger(__name__)
 from bot.utils.formatters import (
     format_quote_response,
     format_no_results,
-    format_needs_clarification,
 )
 
 
@@ -17,9 +16,10 @@ def handle_text(chat_id: int, text: str) -> None:
 
     telegram_service.send_typing(chat_id)
 
-    # Si el usuario está respondiendo una solicitud de aclaración
+    # Respuestas a solicitudes de aclaración anteriores
     if state == "awaiting_brand":
         context["brand"] = text.strip()
+        context.setdefault("search_terms", [text.strip()])
         _run_search(chat_id, context)
         return
 
@@ -30,73 +30,50 @@ def handle_text(chat_id: int, text: str) -> None:
 
     if state == "awaiting_part":
         context["part"] = text.strip()
-        context.setdefault("search_terms", [text.strip()])
+        context["search_terms"] = [text.strip()]
         _run_search(chat_id, context)
         return
 
-    # Consulta nueva: parsear con Claude
+    # Consulta nueva: parsear con Claude para extraer brand/model/part
     try:
         parsed = claude_service.parse_text_query(text)
     except Exception as e:
-        logger.error(f"[text_handler] Falló Claude, intentando fallback directo: {e}")
-        # Fallback: Usar el texto tal cual como término de búsqueda si Claude falla
-        parsed = {
-            "part": text.strip(),
-            "search_terms": [text.strip()],
-            "confidence": 0.5,
-            "fallback": True
-        }
+        logger.error(f"[text_handler] Falló Claude, usando texto directo: {e}")
+        parsed = {"part": text.strip(), "search_terms": [text.strip()], "confidence": 0.5}
 
-
-    # Combinar con contexto previo si lo hay (sesiones encadenadas)
+    # Combinar con contexto de sesión previa
     for field in ("brand", "model", "part", "search_terms", "appliance_type"):
-        if parsed.get(field) and not context.get(field):
-            context[field] = parsed[field]
-        elif parsed.get(field):
+        if parsed.get(field):
             context[field] = parsed[field]
 
-    # Verificar si hay suficiente información para buscar
+    # Si Claude no extrajo nada útil, usar el texto crudo como término de búsqueda
     if not context.get("part") and not context.get("search_terms"):
-        supabase_service.save_session(chat_id, "awaiting_part", context)
-        telegram_service.send_message(
-            chat_id,
-            format_needs_clarification(["part"], context),
-        )
-        return
+        context["part"] = text.strip()
+        context["search_terms"] = [text.strip()]
 
+    # Siempre buscar primero — nunca pedir información antes de intentar
     _run_search(chat_id, context)
 
 
 def _run_search(chat_id: int, context: dict) -> None:
-    """Ejecuta la búsqueda y envía respuesta al usuario."""
-    products = supabase_service.search_products(context)
+    """Busca en BD → PDFs → muestra resultados o sugerencias."""
+    products, sources = supabase_service.search_products(context)
 
     if products:
         supabase_service.clear_session(chat_id)
-        telegram_service.send_message(chat_id, format_quote_response(products, context))
+        telegram_service.send_message(
+            chat_id,
+            format_quote_response(products, context, sources),
+        )
         return
 
-    # Fallback: buscar en manuales
+    # Fallback: manuales PDF
     manual_msg = pdf_service.search_and_format(context)
     if manual_msg:
         supabase_service.clear_session(chat_id)
         telegram_service.send_message(chat_id, manual_msg)
         return
 
-    # Sin resultados: pedir más información si faltan datos
-    missing = []
-    if not context.get("brand"):
-        missing.append("brand")
-    elif not context.get("model"):
-        missing.append("model")
-
-    if missing:
-        new_state = f"awaiting_{missing[0]}"
-        supabase_service.save_session(chat_id, new_state, context)
-        telegram_service.send_message(
-            chat_id,
-            format_needs_clarification(missing, context),
-        )
-    else:
-        supabase_service.clear_session(chat_id)
-        telegram_service.send_message(chat_id, format_no_results(context))
+    # Sin resultados en ninguna fuente — mostrar mensaje con sugerencias
+    supabase_service.clear_session(chat_id)
+    telegram_service.send_message(chat_id, format_no_results(context))

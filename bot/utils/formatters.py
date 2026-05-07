@@ -44,7 +44,15 @@ def format_product(product: dict) -> str:
     return "\n".join(lines)
 
 
-def format_quote_response(products: list[dict], query_context: dict) -> str:
+_SOURCE_LABELS: dict[str, str] = {
+    "fts":    "🗄️ BD/texto",
+    "model":  "🗄️ BD/modelo",
+    "manual": "📄 Manuales PDF",
+    "web":    "🌐 Web fabricante",
+}
+
+
+def format_quote_response(products: list[dict], query_context: dict, sources: list[str] | None = None) -> str:
     """Construye el mensaje completo de cotización."""
     query_desc = _build_query_description(query_context)
 
@@ -52,7 +60,12 @@ def format_quote_response(products: list[dict], query_context: dict) -> str:
         return format_no_results(query_context)
 
     separator = "\n" + "─" * 22 + "\n"
-    header = f"🔩 <b>Resultados para: {query_desc}</b>\n"
+    source_line = ""
+    if sources:
+        labels = " + ".join(_SOURCE_LABELS.get(s, s) for s in sources)
+        source_line = f"\n<i>Fuente: {labels}</i>"
+
+    header = f"🔩 <b>Resultados para: {query_desc}</b>{source_line}\n"
     product_blocks = separator.join(format_product(p) for p in products[:5])
     footer = (
         "\n\n💬 Para confirmar disponibilidad o hacer tu pedido, "
@@ -135,12 +148,13 @@ def format_manual_result(manual_result: dict, query_context: dict) -> str:
     model = manual_result.get("model_prefix", "")
     excerpt = manual_result.get("excerpt", "")
 
-    header = f"📄 Encontré información en el <b>manual técnico</b>"
+    header = f"📄 <b>Información encontrada en manual técnico</b>"
     if brand or model:
-        header += f" ({brand} {model})".strip()
+        header += f" ({(' '.join(filter(None, [brand, model]))).strip()})"
 
     return (
-        f"{header}:\n\n"
+        f"{header}\n"
+        f"<i>Fuente: 📄 Manuales PDF</i>\n\n"
         f"<i>{excerpt[:400]}...</i>\n\n"
         "📞 Para cotización exacta de este repuesto, contáctanos directamente."
     )

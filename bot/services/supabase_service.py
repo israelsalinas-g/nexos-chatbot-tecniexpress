@@ -44,16 +44,16 @@ def clear_session(chat_id: int) -> None:
 # Búsqueda de productos
 # ─────────────────────────────────────────────────────────────
 
-def search_products(parsed: dict) -> list[dict]:
+def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
     """
-    Búsqueda en 3 etapas:
+    Búsqueda en 2 etapas en paralelo:
     1. FTS por nombre/SKU/part_number
     2. Compatibilidad por modelo de equipo
-    3. Fallback en manuales PDF
 
-    Retorna lista deduplicada, máximo 5 resultados.
+    Retorna (productos deduplicados max 5, lista de fuentes que encontraron resultados).
     """
     results_by_id: dict[str, dict] = {}
+    sources: list[str] = []
 
     search_terms = parsed.get("search_terms") or []
     part = parsed.get("part") or ""
@@ -62,7 +62,7 @@ def search_products(parsed: dict) -> list[dict]:
 
     fts_query = " ".join(filter(None, [part] + search_terms))
 
-    # Etapa 1: FTS
+    # Etapa 1: FTS por texto
     if fts_query.strip():
         try:
             r = _supabase.rpc("search_products_fts", {
@@ -70,8 +70,10 @@ def search_products(parsed: dict) -> list[dict]:
                 "p_brand_name": brand,
                 "p_limit": 8,
             }).execute()
-            for product in (r.data or []):
-                results_by_id[product["id"]] = product
+            if r.data:
+                sources.append("fts")
+                for product in r.data:
+                    results_by_id[product["id"]] = product
         except Exception as e:
             print(f"[supabase] Error FTS: {e}")
 
@@ -84,24 +86,24 @@ def search_products(parsed: dict) -> list[dict]:
                 "p_part_filter": part or None,
                 "p_limit": 10,
             }).execute()
-            for product in (r.data or []):
-                pid = product["id"]
-                if pid not in results_by_id:
-                    results_by_id[pid] = product
-                else:
-                    # Producto aparece en ambas etapas → prioridad alta
-                    results_by_id[pid]["_double_match"] = True
+            if r.data:
+                sources.append("model")
+                for product in r.data:
+                    pid = product["id"]
+                    if pid not in results_by_id:
+                        results_by_id[pid] = product
+                    else:
+                        results_by_id[pid]["_double_match"] = True
         except Exception as e:
             print(f"[supabase] Error compatibility: {e}")
 
-    # Ordenar: doble match primero, luego por rank si existe
     sorted_results = sorted(
         results_by_id.values(),
         key=lambda p: (p.get("_double_match", False), p.get("rank", 0)),
         reverse=True,
     )
 
-    return sorted_results[:5]
+    return sorted_results[:5], sources
 
 
 def search_manual_index(parsed: dict) -> list[dict]:
@@ -123,3 +125,12 @@ def search_manual_index(parsed: dict) -> list[dict]:
     except Exception as e:
         print(f"[supabase] Error manual_index: {e}")
         return []
+
+
+# Etiquetas legibles para cada fuente de búsqueda
+SOURCE_LABELS: dict[str, str] = {
+    "fts":    "🗄️ BD · búsqueda por texto",
+    "model":  "🗄️ BD · compatibilidad de modelo",
+    "manual": "📄 Manuales técnicos PDF",
+    "web":    "🌐 Sitio web del fabricante",
+}

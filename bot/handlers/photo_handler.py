@@ -6,7 +6,6 @@ logger = logging.getLogger(__name__)
 from bot.utils.formatters import (
     format_quote_response,
     format_no_results,
-    format_needs_clarification,
     format_image_analysis_result,
 )
 
@@ -93,95 +92,71 @@ def _handle_label(chat_id: int, image_bytes: bytes, caption: str, context: dict)
 
 
 def _handle_part_photo(chat_id: int, image_bytes: bytes, caption: str, context: dict) -> None:
-    """Flujo: foto de repuesto → identificar → buscar."""
+    """Flujo: foto de repuesto → identificar → buscar siempre."""
     try:
         part_info = claude_service.identify_part(image_bytes, caption)
     except Exception as e:
         logger.error(f"[photo_handler] Falló identificación visual (Claude): {e}")
         if caption:
-            # Fallback: Si hay caption, usarlo para buscar directamente
-            telegram_service.send_message(chat_id, "🔍 No pude analizar la imagen, pero buscaré usando tu descripción...")
+            telegram_service.send_message(chat_id, "🔍 No pude analizar la imagen, buscando con tu descripción...")
             _run_search(chat_id, {**context, "part": caption.strip(), "search_terms": [caption.strip()]})
         else:
             telegram_service.send_message(
                 chat_id,
-                "⚠️ No pude identificar el repuesto de la foto. ¿Podrías describirlo con texto o decirme qué necesitas?",
+                "⚠️ No pude identificar el repuesto. Por favor descríbelo con texto.",
             )
         return
 
-
+    part_type = part_info.get("part_type", "")
+    search_terms = part_info.get("search_terms") or ([part_type] if part_type else [])
+    possible_brands = part_info.get("possible_brands") or []
     confidence = part_info.get("confidence", 0)
-    needs_more = part_info.get("needs_more_info", False)
 
-    if confidence < 0.4 or needs_more:
-        missing = part_info.get("missing_info", "más información")
-        supabase_service.save_session(
-            chat_id,
-            "awaiting_part",
-            {**context, "image_analysis": part_info},
-        )
+    # Si Claude no pudo identificar nada útil, pedir descripción
+    if not part_type and not search_terms and not caption:
         telegram_service.send_message(
             chat_id,
-            f"🔍 Identifiqué un posible repuesto pero necesito {missing}. "
-            "¿Puedes dar más detalles o escribir qué necesitas?",
+            "🔍 No pude identificar el repuesto claramente. "
+            "¿Podrías describir qué pieza es o agregar un texto al enviar la foto?",
         )
         return
 
-    # Construir contexto de búsqueda desde el análisis de imagen
-    part_type = part_info.get("part_type", "")
-    search_terms = part_info.get("search_terms") or [part_type]
-    possible_brands = part_info.get("possible_brands") or []
-
+    # Construir contexto: si no hay part_type pero sí caption, usar el caption
     search_context = {
         **context,
-        "part": part_type,
-        "search_terms": search_terms,
+        "part": part_type or caption.strip(),
+        "search_terms": search_terms or [caption.strip()],
     }
-
-    # Si no hay marca en contexto pero Claude identificó posibles marcas, usarla
     if not search_context.get("brand") and len(possible_brands) == 1:
         search_context["brand"] = possible_brands[0]
 
-    telegram_service.send_message(
-        chat_id,
-        format_image_analysis_result(part_info, "part"),
-    )
+    # Mostrar qué identificó Claude (con nota de confianza si es baja)
+    confidence_note = " <i>(identificación aproximada)</i>" if confidence < 0.5 else ""
+    if part_type:
+        telegram_service.send_message(
+            chat_id,
+            f"🔍 Identificado: <b>{part_type}</b>{confidence_note}\nBuscando en inventario...",
+        )
 
     _run_search(chat_id, search_context)
 
 
 def _run_search(chat_id: int, context: dict) -> None:
-    from bot.services import supabase_service as _supa
-
-    products = _supa.search_products(context)
+    products, sources = supabase_service.search_products(context)
 
     if products:
-        _supa.clear_session(chat_id)
-        telegram_service.send_message(chat_id, format_quote_response(products, context))
+        supabase_service.clear_session(chat_id)
+        telegram_service.send_message(chat_id, format_quote_response(products, context, sources))
         return
 
     manual_msg = pdf_service.search_and_format(context)
     if manual_msg:
-        _supa.clear_session(chat_id)
+        supabase_service.clear_session(chat_id)
         telegram_service.send_message(chat_id, manual_msg)
         return
 
-    missing = []
-    if not context.get("brand"):
-        missing.append("brand")
-    elif not context.get("model"):
-        missing.append("model")
-
-    if missing:
-        new_state = f"awaiting_{missing[0]}"
-        _supa.save_session(chat_id, new_state, context)
-        telegram_service.send_message(
-            chat_id,
-            format_needs_clarification(missing, context),
-        )
-    else:
-        _supa.clear_session(chat_id)
-        telegram_service.send_message(chat_id, format_no_results(context))
+    supabase_service.clear_session(chat_id)
+    telegram_service.send_message(chat_id, format_no_results(context))
 
 
 def _extract_part_from_text(text: str) -> dict | None:
