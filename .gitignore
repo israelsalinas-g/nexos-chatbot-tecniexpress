@@ -1,0 +1,19 @@
+# Entorno
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+.venv
+venv/
+ENV/
+
+# Docker
+.dockerignore
+
+# IDEs
+.vscode/
+.idea/
+
+# Sistema
+Thumbs.db
+Desktop.ini
