@@ -44,11 +44,27 @@ def clear_session(chat_id: int) -> None:
 # Búsqueda de productos
 # ─────────────────────────────────────────────────────────────
 
+def search_by_code(code: str) -> tuple[list[dict], list[str]]:
+    """Búsqueda exacta por SKU o N° de parte."""
+    try:
+        r = _supabase.rpc("search_products_fts", {
+            "p_query": code.strip(),
+            "p_brand_name": None,
+            "p_limit": 5,
+        }).execute()
+        if r.data:
+            return r.data, ["code"]
+    except Exception as e:
+        print(f"[supabase] Error search_by_code: {e}")
+    return [], []
+
+
 def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
     """
-    Búsqueda en 2 etapas en paralelo:
-    1. FTS por nombre/SKU/part_number
-    2. Compatibilidad por modelo de equipo
+    Búsqueda en 3 etapas:
+    1. FTS por nombre/SKU/part_number (RPC)
+    2. Compatibilidad por modelo de equipo (RPC)
+    3. ILIKE palabra por palabra como último recurso
 
     Retorna (productos deduplicados max 5, lista de fuentes que encontraron resultados).
     """
@@ -59,6 +75,14 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
     part = parsed.get("part") or ""
     brand = parsed.get("brand")
     model = parsed.get("model")
+
+    # Búsqueda directa por código si parece un SKU (tiene dígitos + letras)
+    code = parsed.get("code") or ""
+    if code:
+        code_results, code_sources = search_by_code(code)
+        for product in code_results:
+            results_by_id[product["id"]] = product
+        sources.extend(code_sources)
 
     fts_query = " ".join(filter(None, [part] + search_terms))
 
@@ -96,6 +120,36 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
                         results_by_id[pid]["_double_match"] = True
         except Exception as e:
             print(f"[supabase] Error compatibility: {e}")
+
+    # Etapa 3: ILIKE fallback si FTS no devolvió nada
+    if not results_by_id and fts_query.strip():
+        try:
+            words = [w for w in fts_query.split() if len(w) > 2][:3]
+            q = _supabase.table("products").select(
+                "id, sku, part_number, name_es, description_es, "
+                "price_public, price_technician, price_wholesale, stock_quantity, compatible_models"
+            ).eq("is_active", True)
+            for w in words:
+                q = q.ilike("name_es", f"%{w}%")
+
+            brand_name_resolved = brand
+            if brand:
+                brand_res = _supabase.table("brands").select("id, name").ilike(
+                    "name", f"%{brand}%"
+                ).limit(1).execute()
+                if brand_res.data:
+                    q = q.eq("brand_id", brand_res.data[0]["id"])
+                    brand_name_resolved = brand_res.data[0]["name"]
+
+            r_ilike = q.limit(5).execute()
+            if r_ilike.data:
+                sources.append("ilike")
+                for product in r_ilike.data:
+                    if brand_name_resolved:
+                        product["brand_name"] = brand_name_resolved
+                    results_by_id[product["id"]] = product
+        except Exception as e:
+            print(f"[supabase] Error ILIKE fallback: {e}")
 
     sorted_results = sorted(
         results_by_id.values(),
@@ -140,8 +194,11 @@ def search_manual_index(parsed: dict) -> list[dict]:
 
 # Etiquetas legibles para cada fuente de búsqueda
 SOURCE_LABELS: dict[str, str] = {
+    "code":   "🗄️ BD · código exacto",
     "fts":    "🗄️ BD · búsqueda por texto",
+    "ilike":  "🗄️ BD · búsqueda aproximada",
     "model":  "🗄️ BD · compatibilidad de modelo",
     "manual": "📄 Manuales técnicos PDF",
-    "web":    "🌐 Sitio web del fabricante",
+    "gdrive": "📄 Manuales PDF (Drive)",
+    "web":    "🌐 Web fabricante",
 }

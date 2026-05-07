@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 from bot.utils.formatters import (
     format_quote_response,
     format_no_results,
+    format_manufacturer_web,
 )
 
 
@@ -80,6 +81,13 @@ def _run_search(chat_id: int, context: dict) -> None:
             telegram_service.send_message(chat_id, text)
         return
 
-    # Sin resultados en ninguna fuente — mostrar mensaje con sugerencias
+    # Capa 3: referencia del fabricante vía conocimiento de Claude
+    web_text = claude_service.search_manufacturer_web(context)
+    if web_text:
+        supabase_service.clear_session(chat_id)
+        telegram_service.send_message(chat_id, format_manufacturer_web(web_text, context))
+        return
+
+    # Sin resultados en ninguna fuente
     supabase_service.clear_session(chat_id)
     telegram_service.send_message(chat_id, format_no_results(context))

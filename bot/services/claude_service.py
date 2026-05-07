@@ -1,7 +1,10 @@
 import base64
 import json
+import logging
 # pyrefly: ignore [missing-import]
 import anthropic
+
+logger = logging.getLogger(__name__)
 from bot.config import ANTHROPIC_API_KEY, CLAUDE_MODEL
 from bot.utils.prompts import (
     SYSTEM_PARSE_QUERY,
@@ -117,6 +120,56 @@ def _detect_media_type(image_bytes: bytes) -> str:
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp"
     return "image/jpeg"  # Telegram envía JPEG por defecto
+
+
+_MANUFACTURER_URLS: dict[str, str] = {
+    "lg":        "https://www.lg.com/us/support/parts",
+    "samsung":   "https://www.samsung.com/us/home-appliances/washers/",
+    "whirlpool": "https://www.whirlpoolparts.com",
+    "mabe":      "https://www.mabe.com.mx/refacciones",
+    "frigidaire":"https://www.frigidaire.com/Parts-and-Accessories/",
+    "ge":        "https://www.geappliances.com/appliance/GE-Appliance-Parts",
+}
+
+
+def search_manufacturer_web(context: dict) -> str:
+    """
+    Capa 3: usa el conocimiento de Claude sobre repuestos de fabricantes.
+    Devuelve texto con código probable, URL de referencia y precio aproximado.
+    """
+    brand = (context.get("brand") or "").lower()
+    model = context.get("model") or ""
+    part  = context.get("part") or " ".join(context.get("search_terms") or [])
+    url   = _MANUFACTURER_URLS.get(brand, "")
+
+    try:
+        response = _client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=400,
+            system=(
+                "Eres un experto en repuestos de electrodomésticos (lavadoras y secadoras).\n"
+                "Dado el repuesto que busca el cliente, proporciona:\n"
+                "1. Código de parte probable (basado en tu conocimiento)\n"
+                "2. Descripción oficial del repuesto\n"
+                "3. Rango de precio aproximado en dólares si lo conoces\n"
+                "4. URL o instrucciones para encontrarlo en el sitio oficial\n"
+                "Responde en español, de forma concisa y útil. "
+                "Si no tienes información confiable, indícalo claramente."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"El cliente necesita: {part}\n"
+                    f"Marca: {brand or 'desconocida'} | Modelo: {model or 'desconocido'}\n"
+                    f"Sitio oficial: {url or 'no disponible'}\n\n"
+                    "¿Cuál sería el código de parte y dónde buscarlo?"
+                ),
+            }],
+        )
+        return response.content[0].text
+    except Exception as e:
+        logger.error(f"[claude] search_manufacturer_web: {e}")
+        return ""
 
 
 def analyze_manual(excerpt: str, query: str) -> dict:

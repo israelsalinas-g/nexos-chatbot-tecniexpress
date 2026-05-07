@@ -45,9 +45,12 @@ def format_product(product: dict) -> str:
 
 
 _SOURCE_LABELS: dict[str, str] = {
+    "code":   "🗄️ BD/código",
     "fts":    "🗄️ BD/texto",
+    "ilike":  "🗄️ BD/aproximado",
     "model":  "🗄️ BD/modelo",
     "manual": "📄 Manuales PDF",
+    "gdrive": "📄 Manuales PDF (Drive)",
     "web":    "🌐 Web fabricante",
 }
 
@@ -141,7 +144,7 @@ def format_image_analysis_result(analysis: dict, image_type: str) -> str:
         return f"🔍 Identificado: <b>{part}</b>\nBuscando en nuestro inventario..."
 
 
-def format_manual_result(manual_result: dict, query_context: dict) -> str:
+def format_manual_result(manual_result: dict, _query_context: dict) -> str:
     """Formato para resultados encontrados en manuales PDF."""
     brand = manual_result.get("brand", "")
     model = manual_result.get("model_prefix", "")
@@ -165,6 +168,18 @@ def format_manual_result(manual_result: dict, query_context: dict) -> str:
     ]
 
     return "\n".join(lines)
+
+
+def format_manufacturer_web(web_text: str, query_context: dict) -> str:
+    """Formato para la respuesta de la capa 3 (conocimiento del fabricante vía Claude)."""
+    query_desc = _build_query_description(query_context)
+    return (
+        f"🌐 <b>Información del fabricante para: {query_desc}</b>\n"
+        f"<i>Fuente: 🌐 Web fabricante (referencia)</i>\n\n"
+        f"{web_text}\n\n"
+        "⚠️ <i>Este repuesto puede conseguirse bajo pedido. "
+        "Contáctanos para confirmar disponibilidad y precio final.</i>"
+    )
 
 
 def format_welcome(user_name: Optional[str] = None) -> str:
