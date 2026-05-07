@@ -22,7 +22,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Tecni Express Bot", lifespan=lifespan)
 
 
+@app.get("/")
+def root():
+    return {"message": "Tecni Express Bot API is running"}
+
+
 @app.get("/health")
+
 def health():
     return {"status": "ok", "bot": "tecni-express"}
 

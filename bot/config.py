@@ -10,6 +10,7 @@ def _require(name: str) -> str:
         value = os.getenv(f"NEXT_PUBLIC_{name}")
     
     if not value:
+        print(f"CRITICAL: Variable de entorno requerida no configurada: {name}")
         raise RuntimeError(f"Variable de entorno requerida no configurada: {name}")
     return value
 

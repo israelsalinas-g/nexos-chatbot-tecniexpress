@@ -2,9 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instalar dependencias del sistema necesarias para PyMuPDF y otras librerías
+# Instalar dependencias del sistema necesarias para PyMuPDF, Anthropic y otras librerías
 RUN apt-get update && apt-get install -y \
     build-essential \
+    python3-dev \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
