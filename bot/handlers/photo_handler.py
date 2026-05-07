@@ -1,4 +1,8 @@
+import logging
 from bot.services import claude_service, supabase_service, telegram_service, pdf_service
+
+logger = logging.getLogger(__name__)
+
 from bot.utils.formatters import (
     format_quote_response,
     format_no_results,
@@ -51,12 +55,13 @@ def _handle_label(chat_id: int, image_bytes: bytes, caption: str, context: dict)
     try:
         label_info = claude_service.read_label(image_bytes)
     except Exception as e:
-        print(f"[photo_handler] Error Claude read_label: {e}")
+        logger.error(f"[photo_handler] Falló lectura de etiqueta (Claude): {e}")
         telegram_service.send_message(
             chat_id,
-            "⚠️ No pude analizar la etiqueta. Por favor escribe la marca y modelo del equipo.",
+            "⚠️ No pude analizar la foto de la etiqueta. Por favor escribe la <b>marca</b> y <b>modelo</b> de tu equipo manualmente.",
         )
         return
+
 
     confidence = label_info.get("confidence", 0)
     brand = label_info.get("brand")
@@ -92,12 +97,18 @@ def _handle_part_photo(chat_id: int, image_bytes: bytes, caption: str, context: 
     try:
         part_info = claude_service.identify_part(image_bytes, caption)
     except Exception as e:
-        print(f"[photo_handler] Error Claude identify_part: {e}")
-        telegram_service.send_message(
-            chat_id,
-            "⚠️ No pude identificar el repuesto. ¿Puedes describirlo con texto o dar más detalles?",
-        )
+        logger.error(f"[photo_handler] Falló identificación visual (Claude): {e}")
+        if caption:
+            # Fallback: Si hay caption, usarlo para buscar directamente
+            telegram_service.send_message(chat_id, "🔍 No pude analizar la imagen, pero buscaré usando tu descripción...")
+            _run_search(chat_id, {**context, "part": caption.strip(), "search_terms": [caption.strip()]})
+        else:
+            telegram_service.send_message(
+                chat_id,
+                "⚠️ No pude identificar el repuesto de la foto. ¿Podrías describirlo con texto o decirme qué necesitas?",
+            )
         return
+
 
     confidence = part_info.get("confidence", 0)
     needs_more = part_info.get("needs_more_info", False)
