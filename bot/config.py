@@ -6,6 +6,9 @@ load_dotenv()
 
 def _require(name: str) -> str:
     value = os.getenv(name)
+    if not value and not name.startswith("NEXT_PUBLIC_"):
+        value = os.getenv(f"NEXT_PUBLIC_{name}")
+    
     if not value:
         raise RuntimeError(f"Variable de entorno requerida no configurada: {name}")
     return value
