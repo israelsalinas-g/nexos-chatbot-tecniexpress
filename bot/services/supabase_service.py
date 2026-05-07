@@ -110,17 +110,23 @@ def search_manual_index(parsed: dict) -> list[dict]:
     """Busca en manuales PDF indexados como fallback."""
     search_terms = parsed.get("search_terms") or []
     part = parsed.get("part") or ""
-    fts_query = " ".join(filter(None, [part] + search_terms))
+    brand = parsed.get("brand") or ""
+    model = parsed.get("model") or ""
+
+    # Incluir marca y modelo en el query FTS para mayor cobertura
+    fts_query = " ".join(filter(None, [part, brand, model] + search_terms))
 
     if not fts_query.strip():
         return []
 
+    print(f"[supabase] Buscando en manuales con query: '{fts_query}' | Brand: {parsed.get('brand')} | Model: {parsed.get('model')}")
     try:
         r = _supabase.rpc("search_manual_index", {
             "p_query": fts_query,
             "p_brand": parsed.get("brand"),
             "p_model": parsed.get("model"),
         }).execute()
+        print(f"[supabase] Resultados en manuales: {len(r.data) if r.data else 0}")
         return r.data or []
     except Exception as e:
         print(f"[supabase] Error manual_index: {e}")
