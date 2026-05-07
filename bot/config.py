@@ -30,7 +30,8 @@ GOOGLE_DRIVE_FOLDER_ID: str = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
 APP_URL: str = os.getenv("APP_URL", "")
 
 # Modelo Claude a usar
-CLAUDE_MODEL = "claude-3-5-sonnet-20240620"
+CLAUDE_MODEL = "claude-3-haiku-20240307"
+
 
 # Máximo de resultados por búsqueda en el chat
 MAX_RESULTS = 5
