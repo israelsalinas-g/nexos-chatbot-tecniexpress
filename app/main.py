@@ -45,7 +45,9 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
     # Responder a Telegram inmediatamente (requiere < 5s)
     # El procesamiento real ocurre en background
+    logger.info(f"Webhook recibido: {update}")
     background_tasks.add_task(_process_update, update)
+
 
     return Response(status_code=200)
 
