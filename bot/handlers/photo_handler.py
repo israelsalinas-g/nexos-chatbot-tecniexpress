@@ -149,10 +149,16 @@ def _run_search(chat_id: int, context: dict) -> None:
         telegram_service.send_message(chat_id, format_quote_response(products, context, sources))
         return
 
-    manual_msg = pdf_service.search_and_format(context)
-    if manual_msg:
+    manual_res = pdf_service.search_and_format(context)
+    if manual_res:
         supabase_service.clear_session(chat_id)
-        telegram_service.send_message(chat_id, manual_msg)
+        text = manual_res["text"]
+        image_url = manual_res.get("image_url")
+
+        if image_url:
+            telegram_service.send_photo(chat_id, image_url, text)
+        else:
+            telegram_service.send_message(chat_id, text)
         return
 
     supabase_service.clear_session(chat_id)

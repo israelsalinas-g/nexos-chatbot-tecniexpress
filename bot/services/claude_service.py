@@ -7,6 +7,7 @@ from bot.utils.prompts import (
     SYSTEM_PARSE_QUERY,
     SYSTEM_IDENTIFY_PART,
     SYSTEM_READ_LABEL,
+    SYSTEM_ANALYZE_MANUAL,
 )
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -116,3 +117,14 @@ def _detect_media_type(image_bytes: bytes) -> str:
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp"
     return "image/jpeg"  # Telegram envía JPEG por defecto
+
+
+def analyze_manual(excerpt: str, query: str) -> dict:
+    """Extrae información estructurada de un fragmento de manual."""
+    response = _client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=300,
+        system=SYSTEM_ANALYZE_MANUAL.format(excerpt=excerpt, query=query),
+        messages=[{"role": "user", "content": f"Analiza esta consulta: {query}"}],
+    )
+    return _parse_json_response(response.content[0].text)

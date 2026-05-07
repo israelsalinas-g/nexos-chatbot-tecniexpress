@@ -19,6 +19,14 @@ def send_message(chat_id: int, text: str, parse_mode: str = "HTML") -> dict:
         "parse_mode": parse_mode,
     })
 
+def send_photo(chat_id: int, photo_url: str, caption: str = "", parse_mode: str = "HTML") -> dict:
+    return _post("sendPhoto", {
+        "chat_id": chat_id,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": parse_mode,
+    })
+
 
 def send_typing(chat_id: int) -> None:
     try:

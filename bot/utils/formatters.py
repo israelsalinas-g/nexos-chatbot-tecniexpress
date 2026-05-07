@@ -143,21 +143,28 @@ def format_image_analysis_result(analysis: dict, image_type: str) -> str:
 
 def format_manual_result(manual_result: dict, query_context: dict) -> str:
     """Formato para resultados encontrados en manuales PDF."""
-    doc = manual_result.get("document_name", "Manual técnico")
     brand = manual_result.get("brand", "")
     model = manual_result.get("model_prefix", "")
     excerpt = manual_result.get("excerpt", "")
+    part_number = manual_result.get("part_number")
+    part_name = manual_result.get("part_name")
 
     header = f"📄 <b>Información encontrada en manual técnico</b>"
     if brand or model:
         header += f" ({(' '.join(filter(None, [brand, model]))).strip()})"
 
-    return (
-        f"{header}\n"
-        f"<i>Fuente: 📄 Manuales PDF</i>\n\n"
-        f"<i>{excerpt[:400]}...</i>\n\n"
-        "📞 Para cotización exacta de este repuesto, contáctanos directamente."
-    )
+    lines = [
+        header,
+        f"<i>Fuente: 📄 Manuales PDF</i>\n",
+        f"✅ <b>¡Código encontrado!</b>",
+        f"🔢 N° Parte: <code>{part_number or 'No especificado'}</code>",
+        f"📦 Repuesto: <b>{part_name or 'No especificado'}</b>",
+        f"\n<i>Detalle: {excerpt[:300]}...</i>\n",
+        "⏳ <b>Próximamente se le enviará la cotización.</b>",
+        "📞 Para agilizar, puedes contactarnos directamente."
+    ]
+
+    return "\n".join(lines)
 
 
 def format_welcome(user_name: Optional[str] = None) -> str:

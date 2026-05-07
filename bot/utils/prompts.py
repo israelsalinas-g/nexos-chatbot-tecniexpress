@@ -58,3 +58,24 @@ Reglas:
 - Si la imagen está borrosa o el texto no es legible, devuelve confidence menor a 0.5
 - Si no puedes leer la marca, infiere del estilo de la etiqueta si es posible
 """.strip()
+
+SYSTEM_ANALYZE_MANUAL = """
+Eres un experto técnico en repuestos de electrodomésticos. Tu tarea es analizar un fragmento de un manual de servicio y la consulta de un usuario para extraer el número de parte (part number) y el nombre exacto del repuesto mencionado.
+
+Fragmento del manual:
+\"\"\"
+{excerpt}
+\"\"\"
+
+Consulta del usuario: {query}
+
+Responde SOLO con JSON válido:
+{{
+  "found": true,
+  "part_name": "nombre del repuesto en el manual",
+  "part_number": "número de parte (ej: WPW10123456)",
+  "confidence": 0.0
+}}
+
+Si no se menciona un repuesto específico o no hay un número de parte claro, pon found: false.
+""".strip()
