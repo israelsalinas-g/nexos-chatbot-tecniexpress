@@ -34,12 +34,15 @@ def handle_text(chat_id: int, text: str) -> None:
     try:
         parsed = claude_service.parse_text_query(text)
     except Exception as e:
-        print(f"[text_handler] Error Claude: {e}")
-        telegram_service.send_message(
-            chat_id,
-            "⚠️ Tuve un problema procesando tu consulta. Por favor intenta de nuevo.",
-        )
-        return
+        logger.error(f"[text_handler] Falló Claude, intentando fallback directo: {e}")
+        # Fallback: Usar el texto tal cual como término de búsqueda si Claude falla
+        parsed = {
+            "part": text.strip(),
+            "search_terms": [text.strip()],
+            "confidence": 0.5,
+            "fallback": True
+        }
+
 
     # Combinar con contexto previo si lo hay (sesiones encadenadas)
     for field in ("brand", "model", "part", "search_terms", "appliance_type"):

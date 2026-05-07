@@ -10,6 +10,8 @@ from bot.utils.prompts import (
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
+print(f"[claude_service] Inicializado con Key: {ANTHROPIC_API_KEY[:10]}... (Largo: {len(ANTHROPIC_API_KEY)})")
+
 
 def _parse_json_response(text: str) -> dict:
     """Extrae JSON de la respuesta de Claude, tolerando bloques de código."""
