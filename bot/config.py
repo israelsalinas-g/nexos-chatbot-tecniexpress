@@ -29,8 +29,8 @@ GOOGLE_DRIVE_FOLDER_ID: str = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
 
 APP_URL: str = os.getenv("APP_URL", "")
 
-# Modelo Claude a usar
-CLAUDE_MODEL = "claude-3-haiku-20240307"
+# Modelo Claude a usar (claude-haiku-4-5 es el más rápido y económico con soporte de visión)
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
 
 
