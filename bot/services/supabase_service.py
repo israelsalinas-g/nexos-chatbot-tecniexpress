@@ -113,18 +113,23 @@ def search_manual_index(parsed: dict) -> list[dict]:
     brand = parsed.get("brand") or ""
     model = parsed.get("model") or ""
 
-    # Incluir marca y modelo en el query FTS para mayor cobertura
-    fts_query = " ".join(filter(None, [part, brand, model] + search_terms))
+    # Limpiar y preparar términos
+    all_terms = list(set(filter(None, [part, brand, model] + search_terms)))
+    
+    # Identificar posibles números de parte (alfanuméricos largos)
+    part_numbers = [t for t in all_terms if any(c.isdigit() for c in t) and any(c.isalpha() for c in t) and len(t) > 4]
+    
+    # El query principal será el repuesto + modelo
+    main_query = " ".join(filter(None, [part, model]))
+    
+    print(f"[supabase] Manual Search | Main: '{main_query}' | PartNums: {part_numbers}")
 
-    if not fts_query.strip():
-        return []
-
-    print(f"[supabase] Buscando en manuales con query: '{fts_query}' | Brand: {parsed.get('brand')} | Model: {parsed.get('model')}")
     try:
         r = _supabase.rpc("search_manual_index", {
-            "p_query": fts_query,
-            "p_brand": parsed.get("brand"),
-            "p_model": parsed.get("model"),
+            "p_query": main_query,
+            "p_brand": brand or None,
+            "p_model": model or None,
+            "p_part_numbers": part_numbers
         }).execute()
         print(f"[supabase] Resultados en manuales: {len(r.data) if r.data else 0}")
         return r.data or []
