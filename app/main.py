@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from bot.config import TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, APP_URL
 from bot.services import telegram_service
 
+print("🚀 Iniciando servidor FastAPI...")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
