@@ -50,7 +50,8 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     return Response(status_code=200)
 
 
-@app.post("/setup-webhook")
+@app.get("/setup-webhook")
+
 async def setup_webhook():
     """Endpoint de utilidad para registrar el webhook en Telegram."""
     if not APP_URL:
