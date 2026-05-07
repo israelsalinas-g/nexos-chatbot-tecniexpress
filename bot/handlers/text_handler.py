@@ -1,4 +1,8 @@
+import logging
 from bot.services import claude_service, supabase_service, telegram_service, pdf_service
+
+logger = logging.getLogger(__name__)
+
 from bot.utils.formatters import (
     format_quote_response,
     format_no_results,

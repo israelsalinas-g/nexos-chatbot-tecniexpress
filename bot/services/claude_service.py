@@ -1,5 +1,6 @@
 import base64
 import json
+# pyrefly: ignore [missing-import]
 import anthropic
 from bot.config import ANTHROPIC_API_KEY, CLAUDE_MODEL
 from bot.utils.prompts import (
