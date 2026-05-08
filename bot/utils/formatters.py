@@ -24,7 +24,11 @@ def format_product(product: dict) -> str:
     brand = product.get("brand_name", "")
     location = product.get("location")
 
-    lines = [f"📦 <b>{name}</b>"]
+    lines = []
+    if product.get("_is_visual_match"):
+        lines.append(f"✨ <b>¡COINCIDENCIA VISUAL!</b>")
+    
+    lines.append(f"📦 <b>{name}</b>")
 
     if brand:
         lines.append(f"🏷️ Marca: {brand}")
@@ -51,6 +55,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "manual": "📄 Manuales PDF",
     "gdrive": "📄 Manuales PDF (Drive)",
     "web":    "🌐 Web fabricante",
+    "visual": "👁️ Verificación Visual",
 }
 
 

@@ -168,3 +168,61 @@ def analyze_manual(excerpt: str, query: str) -> dict:
         messages=[{"role": "user", "content": f"Analiza esta consulta: {query}"}],
     )
     return _parse_json_response(response.content[0].text)
+
+
+def compare_parts(user_image_bytes: bytes, candidates: list[dict]) -> dict:
+    """
+    Compara la foto del usuario con una lista de fotos del catálogo.
+    candidates: list of {"name": str, "image_bytes": bytes}
+    """
+    if not candidates:
+        return {"match_found": False, "best_match_index": None}
+
+    content = []
+    
+    # 1. Foto del usuario
+    user_b64 = base64.standard_b64encode(user_image_bytes).decode("utf-8")
+    content.append({
+        "type": "text",
+        "text": "### FOTO DEL CLIENTE ###"
+    })
+    content.append({
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": _detect_media_type(user_image_bytes),
+            "data": user_b64,
+        },
+    })
+
+    # 2. Fotos de catálogo
+    for i, cand in enumerate(candidates, 1):
+        cand_b64 = base64.standard_b64encode(cand["image_bytes"]).decode("utf-8")
+        content.append({
+            "type": "text",
+            "text": f"### CANDIDATO {i}: {cand['name']} ###"
+        })
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": _detect_media_type(cand["image_bytes"]),
+                "data": cand_b64,
+            },
+        })
+
+    content.append({
+        "type": "text",
+        "text": SYSTEM_COMPARE_PARTS
+    })
+
+    try:
+        response = _client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=500,
+            messages=[{"role": "user", "content": content}],
+        )
+        return _parse_json_response(response.content[0].text)
+    except Exception as e:
+        logger.error(f"[claude_service] compare_parts error: {e}")
+        return {"match_found": False, "best_match_index": None, "error": str(e)}

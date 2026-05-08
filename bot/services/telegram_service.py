@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 import httpx
 from bot.config import TELEGRAM_BOT_TOKEN
 
@@ -67,3 +68,11 @@ def get_webhook_info() -> dict:
         resp = client.get(f"{_BASE}/getWebhookInfo")
         resp.raise_for_status()
         return resp.json()
+
+
+def download_image_from_url(url: str) -> bytes:
+    """Descarga una imagen desde cualquier URL pública."""
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        return resp.content

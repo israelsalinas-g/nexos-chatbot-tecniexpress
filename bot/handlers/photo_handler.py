@@ -138,11 +138,47 @@ def _handle_part_photo(chat_id: int, image_bytes: bytes, caption: str, context: 
             f"🔍 Identificado: <b>{part_type}</b>{confidence_note}\nBuscando en inventario...",
         )
 
-    _run_search(chat_id, search_context)
+    _run_search(chat_id, search_context, image_bytes)
 
 
-def _run_search(chat_id: int, context: dict) -> None:
+def _run_search(chat_id: int, context: dict, user_image_bytes: bytes | None = None) -> None:
     products, sources = supabase_service.search_products(context)
+
+    if products and user_image_bytes:
+        # Intentar validación visual con las imágenes del catálogo
+        candidates = []
+        for p in products[:3]:  # Solo los top 3 para eficiencia
+            image_url = p.get("image_url")
+            if image_url:
+                try:
+                    cand_bytes = telegram_service.download_image_from_url(image_url)
+                    candidates.append({
+                        "id": p["id"],
+                        "name": p["name_es"],
+                        "image_bytes": cand_bytes
+                    })
+                except Exception as e:
+                    logger.warning(f"[photo_handler] Error descargando candidato visual: {e}")
+                    continue
+        
+        if candidates:
+            try:
+                comparison = claude_service.compare_parts(user_image_bytes, candidates)
+                if comparison.get("match_found"):
+                    best_idx = comparison.get("best_match_index")
+                    if best_idx and 1 <= best_idx <= len(candidates):
+                        matched_id = candidates[best_idx-1]["id"]
+                        # Reordenar para poner el match visual arriba
+                        matched_prod = next((p for p in products if p["id"] == matched_id), None)
+                        if matched_prod:
+                            products.remove(matched_prod)
+                            products.insert(0, matched_prod)
+                            matched_prod["_is_visual_match"] = True
+                            if "visual" not in sources:
+                                sources.append("visual")
+                            logger.info(f"[photo_handler] Coincidencia visual encontrada: {matched_prod['name_es']}")
+            except Exception as e:
+                logger.error(f"[photo_handler] Error en comparación visual: {e}")
 
     if products:
         supabase_service.clear_session(chat_id)

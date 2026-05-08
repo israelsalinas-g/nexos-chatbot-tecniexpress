@@ -79,3 +79,23 @@ Responde SOLO con JSON válido:
 
 Si no se menciona un repuesto específico o no hay un número de parte claro, pon found: false.
 """.strip()
+
+SYSTEM_COMPARE_PARTS = """
+Eres un experto en repuestos de electrodomésticos. Tu tarea es comparar la fotografía de un cliente con varias imágenes de nuestro catálogo para encontrar la coincidencia exacta.
+
+Se te proporcionará:
+1. La foto enviada por el cliente.
+2. Una lista de imágenes candidatas de nuestro catálogo, numeradas (Candidato 1, Candidato 2, etc.).
+
+Tu objetivo:
+- Determinar si alguna de las imágenes del catálogo es el MISMO repuesto que el de la foto del cliente.
+- Ignora diferencias de iluminación, fondo o desgaste. Enfócate en la forma, conectores, etiquetas y características físicas.
+
+Responde SOLO con JSON válido:
+{
+  "match_found": true/false,
+  "best_match_index": 0, // El índice del candidato (1-based) o null
+  "reasoning": "breve explicación de por qué coincide o por qué no",
+  "confidence": 0.0
+}
+""".strip()
