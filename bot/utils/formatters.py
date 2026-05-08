@@ -179,13 +179,12 @@ def format_manual_result(manual_result: dict, _query_context: dict) -> str:
 
 
 def format_manufacturer_web(web_text: str, query_context: dict) -> str:
-    """Formato para la respuesta de la capa 3 (conocimiento del fabricante vía Claude)."""
+    """Formato para la respuesta de la capa 3 (conocimiento de Claude)."""
     query_desc = _build_query_description(query_context)
     return (
-        f"🌐 <b>Información del fabricante para: {query_desc}</b>\n"
-        f"<i>Fuente: 🌐 Web fabricante (referencia)</i>\n\n"
+        f"🤖 <b>Análisis de Repuesto: {query_desc}</b>\n\n"
         f"{web_text}\n\n"
-        "⚠️ <i>Este repuesto puede conseguirse bajo pedido. "
+        "👨‍🔧 <i>No lo tengo en el inventario actual, pero **nuestros expertos de Tecni Express pueden conseguirlo bajo pedido**. "
         "Contáctanos para confirmar disponibilidad y precio final.</i>"
     )
 

@@ -120,5 +120,18 @@ def _run_search(chat_id: int, context: dict) -> None:
         return
 
     # Sin resultados en ninguna fuente
-    supabase_service.clear_session(chat_id)
+    # Guardamos el estado en lugar de limpiar la sesión para que recuerde el contexto (ej: el repuesto)
+    missing_fields = []
+    if not context.get("brand"): missing_fields.append("brand")
+    if not context.get("model"): missing_fields.append("model")
+    
+    if missing_fields:
+        if "brand" in missing_fields:
+            supabase_service.save_session(chat_id, "awaiting_brand", context)
+        elif "model" in missing_fields:
+            supabase_service.save_session(chat_id, "awaiting_model", context)
+    else:
+        # Si ya tiene todo y no encontró nada, sí limpiamos
+        supabase_service.clear_session(chat_id)
+        
     telegram_service.send_message(chat_id, format_no_results(context))
