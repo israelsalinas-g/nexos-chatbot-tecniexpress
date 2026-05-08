@@ -39,7 +39,13 @@ def generate_seed():
     print("Batching Marcas...")
     raw_brands = df['Tags'].str.split('|').str[0].dropna().unique()
     brand_values = []
+    
+    brand_values.append("INSERT INTO public.brands (name, slug) SELECT 'Otras', 'otras' WHERE NOT EXISTS (SELECT 1 FROM public.brands WHERE slug = 'otras');")
+    
+    invalid_brands = ['apply-parts', 'precio-actualizado', 'sin-isv', 'actuador']
     for b in raw_brands:
+        if slugify(b) in invalid_brands:
+            continue
         brand_values.append(f"INSERT INTO public.brands (name, slug) SELECT {clean_sql_value(b)}, '{slugify(b)}' WHERE NOT EXISTS (SELECT 1 FROM public.brands WHERE name ILIKE {clean_sql_value(b)});")
     if brand_values:
         sql_lines.extend(brand_values)
@@ -98,7 +104,10 @@ def generate_seed():
 
         if is_new_product:
             tag_brand = str(row.get('Tags', '')).split('|')[0]
-            b_id = f"(SELECT id FROM public.brands WHERE name ILIKE {clean_sql_value(tag_brand)} LIMIT 1)" if tag_brand and pd.notna(tag_brand) else 'NULL'
+            if pd.notna(tag_brand) and slugify(tag_brand) in ['apply-parts', 'precio-actualizado', 'sin-isv', 'actuador']:
+                b_id = "(SELECT id FROM public.brands WHERE slug = 'otras' LIMIT 1)"
+            else:
+                b_id = f"(SELECT id FROM public.brands WHERE name ILIKE {clean_sql_value(tag_brand)} LIMIT 1)" if tag_brand and pd.notna(tag_brand) and str(tag_brand).strip() else 'NULL'
             
             c_id = "(SELECT id FROM public.categories WHERE slug = 'otros' LIMIT 1)"
             p_location = row.get('Grupo')
