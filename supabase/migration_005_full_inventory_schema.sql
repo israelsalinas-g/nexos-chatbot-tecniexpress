@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     stock_quantity integer DEFAULT 0, -- Cantidad global (legacy/fallback)
     brand_id uuid REFERENCES public.brands(id),
     category_id uuid REFERENCES public.categories(id),
+    location text,
     is_active boolean DEFAULT true,
     is_featured boolean DEFAULT false,
     compatible_models text[],

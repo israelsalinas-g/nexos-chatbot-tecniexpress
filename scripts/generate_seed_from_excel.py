@@ -46,12 +46,8 @@ def generate_seed():
 
     # --- 2. CATEGORIES ---
     print("Batching Categorías...")
-    raw_categories = df['Grupo'].dropna().unique()
-    cat_values = []
-    for c in raw_categories:
-        cat_values.append(f"INSERT INTO public.categories (name_es, name_en, slug) SELECT {clean_sql_value(c)}, {clean_sql_value(c)}, '{slugify(c)}' WHERE NOT EXISTS (SELECT 1 FROM public.categories WHERE name_es ILIKE {clean_sql_value(c)});")
-    if cat_values:
-        sql_lines.extend(cat_values)
+    cat_values = ["INSERT INTO public.categories (name_es, name_en, slug) SELECT 'Otros', 'Otros', 'otros' WHERE NOT EXISTS (SELECT 1 FROM public.categories WHERE slug = 'otros');"]
+    sql_lines.extend(cat_values)
 
     # --- 3. WAREHOUSES ---
     print("Batching Bodegas...")
@@ -104,8 +100,9 @@ def generate_seed():
             tag_brand = str(row.get('Tags', '')).split('|')[0]
             b_id = f"(SELECT id FROM public.brands WHERE name ILIKE {clean_sql_value(tag_brand)} LIMIT 1)" if tag_brand and pd.notna(tag_brand) else 'NULL'
             
-            c_name = row.get('Grupo')
-            c_id = f"(SELECT id FROM public.categories WHERE name_es ILIKE {clean_sql_value(c_name)} LIMIT 1)" if c_name and pd.notna(c_name) else 'NULL'
+            c_id = "(SELECT id FROM public.categories WHERE slug = 'otros' LIMIT 1)"
+            p_location = row.get('Grupo')
+            p_location_sql = clean_sql_value(p_location) if pd.notna(p_location) else 'NULL'
             
             tags_list = [t.strip() for t in str(row.get('Tags', '')).split('|')] if pd.notna(row.get('Tags')) else []
             tags_sql = "ARRAY[" + ", ".join([f"'{t}'" for t in tags_list]) + "]" if tags_list else "NULL"
@@ -116,7 +113,7 @@ def generate_seed():
             p_name_en = clean_sql_value(name)
 
             sku_sql_val = f"'{sku_str}'" if sku_str else "NULL"
-            product_values.append(f"({clean_sql_value(name)}, {p_name_en}, '{p_slug}', {sku_sql_val}, {p_public}, {p_tech}, {p_wholesale}, {b_id}, {c_id}, {tags_sql})")
+            product_values.append(f"({clean_sql_value(name)}, {p_name_en}, '{p_slug}', {sku_sql_val}, {p_public}, {p_tech}, {p_wholesale}, {b_id}, {c_id}, {p_location_sql}, {tags_sql})")
             
         # Imágenes e Inventario se procesan siempre, usando el p_slug (sea nuevo o ya existente)
         img_url = row.get('Image Link')
@@ -144,7 +141,7 @@ def generate_seed():
     for i in range(0, len(product_values), batch_size):
         batch = product_values[i:i+batch_size]
         content = f"-- Productos Batch {file_idx-1}\n"
-        content += f"INSERT INTO public.products (name_es, name_en, slug, sku, price_public, price_technician, price_wholesale, brand_id, category_id, tags) VALUES\n"
+        content += f"INSERT INTO public.products (name_es, name_en, slug, sku, price_public, price_technician, price_wholesale, brand_id, category_id, location, tags) VALUES\n"
         content += ",\n".join(batch)
         content += "\nON CONFLICT (sku) DO UPDATE SET price_public = EXCLUDED.price_public;\n"
         with open(out_dir / f'{file_idx:02d}_products.sql', 'w', encoding='utf-8') as f:
