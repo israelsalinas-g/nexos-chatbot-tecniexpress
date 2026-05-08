@@ -225,6 +225,8 @@ def _build_query_description(ctx: dict) -> str:
     parts = []
     if ctx.get("part"):
         parts.append(ctx["part"].title())
+    elif ctx.get("search_terms"):
+        parts.append(" ".join(ctx["search_terms"]).title())
     if ctx.get("brand"):
         parts.append(ctx["brand"])
     if ctx.get("model"):
