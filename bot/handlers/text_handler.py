@@ -55,14 +55,22 @@ def handle_text(chat_id: int, text: str) -> None:
         parsed["search_terms"] = [skus[0]]
 
     # Combinar con contexto de sesión previa
-    for field in ("brand", "model", "part", "search_terms", "appliance_type"):
+    # Si Claude identificó un repuesto nuevo, reemplazamos el anterior para no mezclar "actuador" con "teclado"
+    if parsed.get("part") or parsed.get("search_terms"):
+        context["part"] = parsed.get("part")
+        context["search_terms"] = parsed.get("search_terms")
+
+    for field in ("brand", "model", "appliance_type"):
         if parsed.get(field):
             context[field] = parsed[field]
 
-    # Si Claude no extrajo nada útil, usar el texto crudo como término de búsqueda
+    # Si después de todo no hay un repuesto claro en el contexto, usamos el texto del usuario
     if not context.get("part") and not context.get("search_terms"):
         context["part"] = text.strip()
         context["search_terms"] = [text.strip()]
+    
+    # Debug log (opcional, ayuda a ver qué está buscando el bot)
+    logger.info(f"[text_handler] Buscando: {context}")
 
     # Siempre buscar primero — nunca pedir información antes de intentar
     _run_search(chat_id, context)

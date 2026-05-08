@@ -86,12 +86,13 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
 
     fts_query = " ".join(filter(None, [part] + search_terms))
 
-    # Etapa 1: FTS por texto
+    # Etapa 1: FTS por texto (Usando la nueva RPC v2 optimizada)
     if fts_query.strip():
         try:
-            r = _supabase.rpc("search_products_fts", {
+            r = _supabase.rpc("search_products_v2", {
                 "p_query": fts_query,
                 "p_brand_name": brand,
+                "p_model": model,
                 "p_limit": 8,
             }).execute()
             if r.data:
@@ -99,7 +100,7 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
                 for product in r.data:
                     results_by_id[product["id"]] = product
         except Exception as e:
-            print(f"[supabase] Error FTS: {e}")
+            print(f"[supabase] Error FTS v2: {e}")
 
     # Etapa 2: Compatibilidad por modelo
     if model:
