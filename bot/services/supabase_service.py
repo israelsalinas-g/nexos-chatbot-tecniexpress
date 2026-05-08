@@ -130,7 +130,7 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
                 "price_public, price_technician, price_wholesale, stock_quantity, image_url"
             ).eq("is_active", True)
             for w in words:
-                q = q.ilike("name_es", f"%{w}%")
+                q = q.or_(f"name_es.ilike.%{w}%,sku.ilike.%{w}%")
 
             brand_name_resolved = brand
             if brand:
