@@ -125,9 +125,9 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
     if not results_by_id and fts_query.strip():
         try:
             words = [w for w in fts_query.split() if len(w) > 2][:3]
-            q = _supabase.table("products").select(
+            q = _supabase.table("bot_products_view").select(
                 "id, sku, part_number, name_es, description_es, "
-                "price_public, price_technician, price_wholesale, stock_quantity, compatible_models"
+                "price_public, price_technician, price_wholesale, stock_quantity, image_url"
             ).eq("is_active", True)
             for w in words:
                 q = q.ilike("name_es", f"%{w}%")
