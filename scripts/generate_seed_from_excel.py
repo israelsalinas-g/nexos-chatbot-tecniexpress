@@ -101,39 +101,71 @@ def generate_seed():
             p_public = int(row.get('Precio de venta', 0) * 100) if pd.notna(row.get('Precio de venta')) else 0
             p_tech = int(row.get('Precio de tecnico', 0) * 100) if pd.notna(row.get('Precio de tecnico')) else 0
             p_wholesale = int(row.get('Precio Mayoreo', 0) * 100) if pd.notna(row.get('Precio Mayoreo')) else 0
+            
+            # Nuevos campos obligatorios
+            p_slug = slugify(f"{name} {sku}")
+            p_name_en = clean_sql_value(name)
 
-            product_values.append(f"('{p_id}', {clean_sql_value(name)}, {clean_sql_value(sku)}, {p_public}, {p_tech}, {p_wholesale}, {b_id}, {c_id}, {tags_sql})")
+            product_values.append(f"('{p_id}', {clean_sql_value(name)}, {p_name_en}, '{p_slug}', {clean_sql_value(sku)}, {p_public}, {p_tech}, {p_wholesale}, {b_id}, {c_id}, {tags_sql})")
             
             img_url = row.get('Image Link')
             if pd.notna(img_url):
                 img_id = get_uuid(f"img:{p_id}:{img_url}")
-                image_values.append(f"('{img_id}', '{p_id}', {clean_sql_value(img_url)}, true)")
+                storage_path = f"'external/{img_id}'"
+                image_values.append(f"('{img_id}', '{p_id}', {clean_sql_value(img_url)}, {storage_path}, true)")
 
         w_name = row.get('Tienda')
         if w_name in warehouse_map:
             w_id = warehouse_map[w_name]
             qty = int(row.get('Cantidad', 0)) if pd.notna(row.get('Cantidad')) else 0
             inv_id = get_uuid(f"inv:{p_id}:{w_id}")
-            inventory_values.append(f"('{inv_id}', '{p_id}', '{w_id}', {qty})")
+            # Usar product_id y warehouse_id como UNIQUE constraint trigger
+            inventory_values.append(f"('{p_id}', '{w_id}', {qty})")
 
-    # Escribir Productos en batches de 100
-    for i in range(0, len(product_values), 100):
-        batch = product_values[i:i+100]
-        sql_lines.append(f"\nINSERT INTO public.products (id, name_es, sku, price_public, price_technician, price_wholesale, brand_id, category_id, tags) VALUES " + ", ".join(batch) + "\nON CONFLICT (id) DO UPDATE SET price_public = EXCLUDED.price_public, price_technician = EXCLUDED.price_technician, price_wholesale = EXCLUDED.price_wholesale;")
+    # --- Generación de Archivos Particionados ---
+    out_dir = BASE_DIR / 'supabase' / 'seed_parts_excel'
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Archivo 1: Marcas y Categorías y Bodegas
+    with open(out_dir / '01_base.sql', 'w', encoding='utf-8') as f:
+        f.write("-- Base Data\n" + "\n".join(sql_lines))
+        
+    # Archivo 2..N: Productos
+    file_idx = 2
+    batch_size = 300
+    for i in range(0, len(product_values), batch_size):
+        batch = product_values[i:i+batch_size]
+        content = f"-- Productos Batch {file_idx-1}\n"
+        content += f"INSERT INTO public.products (id, name_es, name_en, slug, sku, price_public, price_technician, price_wholesale, brand_id, category_id, tags) VALUES\n"
+        content += ",\n".join(batch)
+        content += "\nON CONFLICT (id) DO UPDATE SET price_public = EXCLUDED.price_public, stock_quantity = 0;\n"
+        with open(out_dir / f'{file_idx:02d}_products.sql', 'w', encoding='utf-8') as f:
+            f.write(content)
+        file_idx += 1
 
-    # Escribir Imágenes en batches de 100
-    for i in range(0, len(image_values), 100):
-        batch = image_values[i:i+100]
-        sql_lines.append(f"\nINSERT INTO public.product_images (id, product_id, url, is_primary) VALUES " + ", ".join(batch) + "\nON CONFLICT (id) DO NOTHING;")
+    # Archivo N+1: Imágenes
+    img_content = "-- Imágenes\n"
+    for i in range(0, len(image_values), 300):
+        batch = image_values[i:i+300]
+        img_content += f"INSERT INTO public.product_images (id, product_id, url, storage_path, is_primary) VALUES\n"
+        img_content += ",\n".join(batch)
+        img_content += "\nON CONFLICT (id) DO NOTHING;\n\n"
+    with open(out_dir / f'{file_idx:02d}_images.sql', 'w', encoding='utf-8') as f:
+        f.write(img_content)
+    file_idx += 1
 
-    # Escribir Inventario en batches de 100
-    for i in range(0, len(inventory_values), 100):
-        batch = inventory_values[i:i+100]
-        sql_lines.append(f"\nINSERT INTO public.inventory (id, product_id, warehouse_id, quantity) VALUES " + ", ".join(batch) + "\nON CONFLICT (id) DO UPDATE SET quantity = EXCLUDED.quantity;")
+    # Archivo N+2: Inventario
+    inv_content = "-- Inventario\n"
+    for i in range(0, len(inventory_values), 300):
+        batch = inventory_values[i:i+300]
+        inv_content += f"INSERT INTO public.inventory (product_id, warehouse_id, quantity) VALUES\n"
+        inv_content += ",\n".join(batch)
+        inv_content += "\nON CONFLICT (product_id, warehouse_id) DO UPDATE SET quantity = EXCLUDED.quantity;\n\n"
+    with open(out_dir / f'{file_idx:02d}_inventory.sql', 'w', encoding='utf-8') as f:
+        f.write(inv_content)
 
-    with open(OUTPUT_SQL, 'w', encoding='utf-8') as f:
-        f.write("\n".join(sql_lines))
-    print(f"Seed generado con éxito en: {OUTPUT_SQL}")
+    print(f"Seed dividido en {file_idx} archivos en la carpeta: {out_dir}")
 
 if __name__ == "__main__":
     generate_seed()
+
