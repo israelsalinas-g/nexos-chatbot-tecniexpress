@@ -18,7 +18,6 @@ def format_stock(quantity: int) -> str:
 def format_product(product: dict) -> str:
     """Formatea un producto individual como bloque HTML de Telegram."""
     name = product.get("name_es", "Repuesto")
-    sku = product.get("sku", "")
     part_number = product.get("part_number", "")
     price = product.get("price_public", 0)
     quantity = product.get("total_quantity") or product.get("stock_quantity", 0)
@@ -29,12 +28,8 @@ def format_product(product: dict) -> str:
     if brand:
         lines.append(f"🏷️ Marca: {brand}")
 
-    id_line = " | ".join(filter(None, [
-        f"SKU: {sku}" if sku else None,
-        f"N° Parte: {part_number}" if part_number else None,
-    ]))
-    if id_line:
-        lines.append(f"🔢 {id_line}")
+    if part_number:
+        lines.append(f"🔢 N° Parte: {part_number}")
 
     if price:
         lines.append(f"💰 Precio: <b>{format_price(price)}</b>")
@@ -55,27 +50,36 @@ _SOURCE_LABELS: dict[str, str] = {
 }
 
 
-def format_quote_response(products: list[dict], query_context: dict, sources: list[str] | None = None) -> str:
-    """Construye el mensaje completo de cotización."""
+def format_quote_header(query_context: dict, sources: list[str] | None = None) -> str:
+    """Construye el encabezado de los resultados."""
     query_desc = _build_query_description(query_context)
-
-    if not products:
-        return format_no_results(query_context)
-
-    separator = "\n" + "─" * 22 + "\n"
     source_line = ""
     if sources:
         labels = " + ".join(_SOURCE_LABELS.get(s, s) for s in sources)
         source_line = f"\n<i>Fuente: {labels}</i>"
+    
+    return f"🔩 <b>Resultados para: {query_desc}</b>{source_line}"
 
-    header = f"🔩 <b>Resultados para: {query_desc}</b>{source_line}\n"
-    product_blocks = separator.join(format_product(p) for p in products[:5])
-    footer = (
-        "\n\n💬 Para confirmar disponibilidad o hacer tu pedido, "
+
+def format_quote_footer() -> str:
+    """Construye el pie de mensaje."""
+    return (
+        "💬 Para confirmar disponibilidad o hacer tu pedido, "
         "contacta a nuestro equipo de ventas."
     )
 
-    return header + separator + product_blocks + footer
+
+def format_quote_response(products: list[dict], query_context: dict, sources: list[str] | None = None) -> str:
+    """Fallback para cuando se envían sin foto (por compatibilidad)."""
+    if not products:
+        return format_no_results(query_context)
+
+    header = format_quote_header(query_context, sources)
+    separator = "\n" + "─" * 22 + "\n"
+    product_blocks = separator.join(format_product(p) for p in products[:5])
+    footer = "\n\n" + format_quote_footer()
+
+    return header + "\n" + separator + product_blocks + footer
 
 
 def format_no_results(query_context: dict) -> str:

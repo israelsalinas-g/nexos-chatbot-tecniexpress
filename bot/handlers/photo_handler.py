@@ -146,7 +146,29 @@ def _run_search(chat_id: int, context: dict) -> None:
 
     if products:
         supabase_service.clear_session(chat_id)
-        telegram_service.send_message(chat_id, format_quote_response(products, context, sources))
+        
+        # Enviar encabezado
+        from bot.utils import formatters
+        header = formatters.format_quote_header(context, sources)
+        telegram_service.send_message(chat_id, header)
+        
+        # Enviar cada producto individualmente (con foto si existe)
+        for p in products[:5]:
+            caption = formatters.format_product(p)
+            image_url = p.get("image_url")
+            
+            if image_url:
+                try:
+                    telegram_service.send_photo(chat_id, image_url, caption)
+                except Exception:
+                    # Si la URL de la imagen falla, enviar como texto normal
+                    telegram_service.send_message(chat_id, caption)
+            else:
+                telegram_service.send_message(chat_id, caption)
+                
+        # Enviar pie de mensaje
+        footer = formatters.format_quote_footer()
+        telegram_service.send_message(chat_id, footer)
         return
 
     manual_res = pdf_service.search_and_format(context)
