@@ -51,8 +51,8 @@ def handle_text(chat_id: int, text: str) -> None:
 
     if skus:
         parsed["code"] = skus[0]
-        if not parsed.get("part"):
-            parsed["part"] = skus[0]
+        parsed["part"] = skus[0]
+        parsed["search_terms"] = [skus[0]]
 
     # Combinar con contexto de sesión previa
     for field in ("brand", "model", "part", "search_terms", "appliance_type"):
