@@ -126,7 +126,7 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
         try:
             words = [w for w in fts_query.split() if len(w) > 2][:3]
             q = _supabase.table("bot_products_view").select(
-                "id, sku, part_number, name_es, description_es, "
+                "id, sku, part_number, name_es, description_es, location, "
                 "price_public, price_technician, price_wholesale, stock_quantity, image_url"
             ).eq("is_active", True)
             for w in words:
