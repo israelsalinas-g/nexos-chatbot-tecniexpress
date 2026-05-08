@@ -20,6 +20,26 @@ def slugify(text):
     text = re.sub(r'[\s_-]+', '-', text)
     return text.strip('-')
 
+def auto_categorize(name):
+    name_lower = str(name).lower()
+    if 'valvula' in name_lower or 'válvula' in name_lower: return 'Válvulas'
+    elif 'banda' in name_lower: return 'Bandas'
+    elif 'switch' in name_lower or 'interruptor' in name_lower: return 'Switches'
+    elif 'bomba' in name_lower: return 'Bombas'
+    elif 'tarjeta' in name_lower: return 'Tarjetas Electrónicas'
+    elif 'motor' in name_lower: return 'Motores'
+    elif 'sensor' in name_lower: return 'Sensores'
+    elif 'filtro' in name_lower: return 'Filtros'
+    elif 'termostato' in name_lower: return 'Termostatos'
+    elif 'resistencia' in name_lower: return 'Resistencias'
+    elif 'actuador' in name_lower: return 'Actuadores'
+    elif 'polea' in name_lower: return 'Poleas'
+    elif 'capacitor' in name_lower: return 'Capacitores'
+    elif 'manguera' in name_lower: return 'Mangueras'
+    elif 'compresor' in name_lower: return 'Compresores'
+    elif 'amortiguador' in name_lower: return 'Amortiguadores'
+    return 'Otros'
+
 def clean_sql_value(val):
     if pd.isna(val):
         return 'NULL'
@@ -52,7 +72,15 @@ def generate_seed():
 
     # --- 2. CATEGORIES ---
     print("Batching Categorías...")
-    cat_values = ["INSERT INTO public.categories (name_es, name_en, slug) SELECT 'Otros', 'Otros', 'otros' WHERE NOT EXISTS (SELECT 1 FROM public.categories WHERE slug = 'otros');"]
+    categories_list = [
+        'Válvulas', 'Bandas', 'Switches', 'Bombas', 'Tarjetas Electrónicas',
+        'Motores', 'Sensores', 'Filtros', 'Termostatos', 'Resistencias',
+        'Actuadores', 'Poleas', 'Capacitores', 'Mangueras', 'Compresores',
+        'Amortiguadores', 'Otros'
+    ]
+    cat_values = []
+    for c in categories_list:
+        cat_values.append(f"INSERT INTO public.categories (name_es, name_en, slug) SELECT {clean_sql_value(c)}, {clean_sql_value(c)}, '{slugify(c)}' WHERE NOT EXISTS (SELECT 1 FROM public.categories WHERE slug = '{slugify(c)}');")
     sql_lines.extend(cat_values)
 
     # --- 3. WAREHOUSES ---
@@ -109,7 +137,9 @@ def generate_seed():
             else:
                 b_id = f"(SELECT id FROM public.brands WHERE name ILIKE {clean_sql_value(tag_brand)} LIMIT 1)" if tag_brand and pd.notna(tag_brand) and str(tag_brand).strip() else 'NULL'
             
-            c_id = "(SELECT id FROM public.categories WHERE slug = 'otros' LIMIT 1)"
+            category_name = auto_categorize(name)
+            c_id = f"(SELECT id FROM public.categories WHERE slug = '{slugify(category_name)}' LIMIT 1)"
+            
             p_location = row.get('Grupo')
             p_location_sql = clean_sql_value(p_location) if pd.notna(p_location) else 'NULL'
             
