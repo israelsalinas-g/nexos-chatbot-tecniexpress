@@ -36,11 +36,23 @@ def handle_text(chat_id: int, text: str) -> None:
         return
 
     # Consulta nueva: parsear con Claude para extraer brand/model/part
+    import re
+    # Patrón simple para SKUs: Alfanuméricos de 6+ caracteres o con guiones
+    potential_codes = re.findall(r'\b[A-Z0-9]{2,10}(?:-[A-Z0-9]{2,10})*\b', text.upper())
+    # Filtrar términos comunes que no son SKUs (ej: SKU, REF, PARTE, PRODUCTO)
+    STOP_CODES = {'SKU', 'REF', 'PARTE', 'PRODUCTO', 'LAVADORA', 'MABE', 'SAMSUNG', 'WHIRLPOOL', 'LG'}
+    skus = [c for c in potential_codes if c not in STOP_CODES and any(char.isdigit() for char in c)]
+
     try:
         parsed = claude_service.parse_text_query(text)
     except Exception as e:
         logger.error(f"[text_handler] Falló Claude, usando texto directo: {e}")
         parsed = {"part": text.strip(), "search_terms": [text.strip()], "confidence": 0.5}
+
+    if skus:
+        parsed["code"] = skus[0]
+        if not parsed.get("part"):
+            parsed["part"] = skus[0]
 
     # Combinar con contexto de sesión previa
     for field in ("brand", "model", "part", "search_terms", "appliance_type"):
