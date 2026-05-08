@@ -10,6 +10,8 @@ ENV/
 # Docker
 .dockerignore
 
+data/
+
 # IDEs
 .vscode/
 .idea/
