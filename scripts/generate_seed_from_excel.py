@@ -157,7 +157,15 @@ def generate_seed():
         # Imágenes e Inventario se procesan siempre, usando el p_slug (sea nuevo o ya existente)
         img_url = row.get('Image Link')
         if pd.notna(img_url) and str(img_url).strip():
-            img_sql = f"INSERT INTO public.product_images (product_id, url, storage_path, is_primary) SELECT id, {clean_sql_value(img_url)}, 'external/' || id, true FROM public.products WHERE slug = '{p_slug}' ON CONFLICT DO NOTHING;"
+            img_val = clean_sql_value(img_url)
+            # Usamos un INSERT ... SELECT con un WHERE NOT EXISTS para evitar duplicados sin depender de constraints únicos
+            img_sql = (
+                f"INSERT INTO public.product_images (product_id, url, storage_path, is_primary) "
+                f"SELECT p.id, {img_val}, 'external/' || p.id, true "
+                f"FROM public.products p "
+                f"WHERE p.slug = '{p_slug}' "
+                f"AND NOT EXISTS (SELECT 1 FROM public.product_images pi WHERE pi.product_id = p.id AND pi.url = {img_val});"
+            )
             image_values.append(img_sql)
 
         w_name = row.get('Tienda')
