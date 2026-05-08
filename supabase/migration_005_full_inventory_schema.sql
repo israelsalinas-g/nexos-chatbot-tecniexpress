@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS public.product_images (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     product_id uuid REFERENCES public.products(id) ON DELETE CASCADE,
     url text NOT NULL,
+    storage_path text,
     is_primary boolean DEFAULT false,
     created_at timestamptz DEFAULT now()
 );
