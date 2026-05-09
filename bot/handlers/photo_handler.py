@@ -93,13 +93,27 @@ def _handle_label(chat_id: int, image_bytes: bytes, caption: str, context: dict)
 
 def _handle_part_photo(chat_id: int, image_bytes: bytes, caption: str, context: dict) -> None:
     """Flujo: foto de repuesto → identificar → buscar siempre."""
+    # Generar embedding CLIP antes de cualquier búsqueda
+    clip_embedding: list[float] | None = None
+    try:
+        from bot.services import clip_service
+        clip_embedding = clip_service.get_image_embedding(image_bytes)
+        logger.info("[photo_handler] Embedding CLIP generado (512 dims)")
+    except Exception as e:
+        logger.warning(f"[photo_handler] CLIP no disponible, continuando sin embedding: {e}")
+
     try:
         part_info = claude_service.identify_part(image_bytes, caption)
     except Exception as e:
         logger.error(f"[photo_handler] Falló identificación visual (Claude): {e}")
         if caption:
             telegram_service.send_message(chat_id, "🔍 No pude analizar la imagen, buscando con tu descripción...")
-            _run_search(chat_id, {**context, "part": caption.strip(), "search_terms": [caption.strip()]})
+            _run_search(
+                chat_id,
+                {**context, "part": caption.strip(), "search_terms": [caption.strip()]},
+                user_image_bytes=image_bytes,
+                clip_embedding=clip_embedding,
+            )
         else:
             telegram_service.send_message(
                 chat_id,
@@ -138,23 +152,34 @@ def _handle_part_photo(chat_id: int, image_bytes: bytes, caption: str, context: 
             f"🔍 Identificado: <b>{part_type}</b>{confidence_note}\nBuscando en inventario...",
         )
 
-    _run_search(chat_id, search_context, image_bytes)
+    _run_search(chat_id, search_context, image_bytes, clip_embedding=clip_embedding)
 
 
-def _run_search(chat_id: int, context: dict, user_image_bytes: bytes | None = None) -> None:
+def _run_search(
+    chat_id: int,
+    context: dict,
+    user_image_bytes: bytes | None = None,
+    clip_embedding: list[float] | None = None,
+) -> None:
     products, sources = supabase_service.search_products(context)
 
-    # ── Validación visual sobre candidatos de texto ───────────────────────────
-    if products and user_image_bytes:
-        products, sources = _apply_visual_rerank(user_image_bytes, products, sources)
+    # ── Re-rank visual de candidatos de texto ────────────────────────────────
+    if products and (clip_embedding or user_image_bytes):
+        if clip_embedding:
+            products, sources = _apply_clip_rerank(clip_embedding, products, sources)
+        else:
+            products, sources = _apply_visual_rerank(user_image_bytes, products, sources)
 
-    # ── Fallback visual directo: si el texto no encontró nada y tenemos foto ──
-    if not products and user_image_bytes:
+    # ── Fallback visual directo: texto no encontró nada ──────────────────────
+    if not products and (clip_embedding or user_image_bytes):
         telegram_service.send_message(
             chat_id,
             "📷 No encontré resultados por texto. Comparando con imágenes del catálogo..."
         )
-        products, sources = _visual_search_from_bucket(user_image_bytes, context)
+        if clip_embedding:
+            products, sources = _visual_search_from_clip(clip_embedding)
+        else:
+            products, sources = _visual_search_from_bucket(user_image_bytes, context)
 
     if products:
         supabase_service.clear_session(chat_id)
@@ -300,6 +325,69 @@ def _visual_search_from_bucket(
 
     return [], []
 
+
+
+def _apply_clip_rerank(
+    clip_embedding: list[float],
+    products: list[dict],
+    sources: list[str],
+) -> tuple[list[dict], list[str]]:
+    """
+    Re-ordena los candidatos de búsqueda por texto usando su similitud CLIP
+    contra la foto del usuario. El producto más similar visualmente sube al tope.
+    """
+    clip_results = supabase_service.search_by_image_embedding(clip_embedding, limit=10)
+    if not clip_results:
+        logger.info("[photo_handler] CLIP rerank: sin resultados, manteniendo orden de texto.")
+        return products, sources
+
+    sim_map: dict[str, float] = {}
+    for cr in clip_results:
+        pid = cr["id"]
+        sim = cr.get("_clip_similarity", 0.0)
+        if pid not in sim_map or sim > sim_map[pid]:
+            sim_map[pid] = sim
+
+    for p in products:
+        p["_clip_similarity"] = sim_map.get(p["id"], 0.0)
+
+    products_sorted = sorted(products, key=lambda p: p.get("_clip_similarity", 0.0), reverse=True)
+
+    if products_sorted and products_sorted[0].get("_clip_similarity", 0.0) > 0.15:
+        products_sorted[0]["_is_visual_match"] = True
+        if "clip" not in sources:
+            sources.append("clip")
+        logger.info(
+            f"[photo_handler] CLIP rerank: {products_sorted[0]['name_es']} "
+            f"(sim={products_sorted[0]['_clip_similarity']:.3f})"
+        )
+
+    return products_sorted, sources
+
+
+def _visual_search_from_clip(
+    clip_embedding: list[float],
+    limit: int = 3,
+) -> tuple[list[dict], list[str]]:
+    """
+    Búsqueda visual directa contra todo el catálogo usando pgvector.
+    Solo retorna resultados que superen el umbral mínimo de similitud.
+    """
+    clip_results = supabase_service.search_by_image_embedding(clip_embedding, limit=limit)
+    if not clip_results:
+        logger.info("[photo_handler] CLIP directo: sin resultados en catálogo.")
+        return [], []
+
+    confident = [r for r in clip_results if r.get("_clip_similarity", 0.0) >= 0.20]
+    if confident:
+        logger.info(
+            f"[photo_handler] CLIP directo: {len(confident)} resultado(s) "
+            f"(top sim={confident[0]['_clip_similarity']:.3f})"
+        )
+        return confident, ["clip"]
+
+    logger.info("[photo_handler] CLIP directo: todos los resultados bajo umbral de similitud.")
+    return [], []
 
 
 def _extract_part_from_text(text: str) -> dict | None:

@@ -26,7 +26,9 @@ def format_product(product: dict) -> str:
 
     lines = []
     if product.get("_is_visual_match"):
-        lines.append(f"✨ <b>¡COINCIDENCIA VISUAL!</b>")
+        sim = product.get("_clip_similarity")
+        sim_pct = f" ({sim * 100:.0f}% similitud)" if sim else ""
+        lines.append(f"✨ <b>¡COINCIDENCIA VISUAL{sim_pct}!</b>")
     
     lines.append(f"📦 <b>{name}</b>")
 
