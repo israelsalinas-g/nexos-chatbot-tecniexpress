@@ -144,64 +144,39 @@ def _handle_part_photo(chat_id: int, image_bytes: bytes, caption: str, context: 
 def _run_search(chat_id: int, context: dict, user_image_bytes: bytes | None = None) -> None:
     products, sources = supabase_service.search_products(context)
 
+    # ── Validación visual sobre candidatos de texto ───────────────────────────
     if products and user_image_bytes:
-        # Intentar validación visual con las imágenes del catálogo
-        candidates = []
-        for p in products[:3]:  # Solo los top 3 para eficiencia
-            image_url = p.get("image_url")
-            if image_url:
-                try:
-                    cand_bytes = telegram_service.download_image_from_url(image_url)
-                    candidates.append({
-                        "id": p["id"],
-                        "name": p["name_es"],
-                        "image_bytes": cand_bytes
-                    })
-                except Exception as e:
-                    logger.warning(f"[photo_handler] Error descargando candidato visual: {e}")
-                    continue
-        
-        if candidates:
-            try:
-                comparison = claude_service.compare_parts(user_image_bytes, candidates)
-                if comparison.get("match_found"):
-                    best_idx = comparison.get("best_match_index")
-                    if best_idx and 1 <= best_idx <= len(candidates):
-                        matched_id = candidates[best_idx-1]["id"]
-                        # Reordenar para poner el match visual arriba
-                        matched_prod = next((p for p in products if p["id"] == matched_id), None)
-                        if matched_prod:
-                            products.remove(matched_prod)
-                            products.insert(0, matched_prod)
-                            matched_prod["_is_visual_match"] = True
-                            if "visual" not in sources:
-                                sources.append("visual")
-                            logger.info(f"[photo_handler] Coincidencia visual encontrada: {matched_prod['name_es']}")
-            except Exception as e:
-                logger.error(f"[photo_handler] Error en comparación visual: {e}")
+        products, sources = _apply_visual_rerank(user_image_bytes, products, sources)
+
+    # ── Fallback visual directo: si el texto no encontró nada y tenemos foto ──
+    if not products and user_image_bytes:
+        telegram_service.send_message(
+            chat_id,
+            "📷 No encontré resultados por texto. Comparando con imágenes del catálogo..."
+        )
+        products, sources = _visual_search_from_bucket(user_image_bytes, context)
 
     if products:
         supabase_service.clear_session(chat_id)
-        
+
         # Enviar encabezado
         from bot.utils import formatters
         header = formatters.format_quote_header(context, sources)
         telegram_service.send_message(chat_id, header)
-        
+
         # Enviar cada producto individualmente (con foto si existe)
         for p in products[:5]:
             caption = formatters.format_product(p)
             image_url = p.get("image_url")
-            
+
             if image_url:
                 try:
                     telegram_service.send_photo(chat_id, image_url, caption)
                 except Exception:
-                    # Si la URL de la imagen falla, enviar como texto normal
                     telegram_service.send_message(chat_id, caption)
             else:
                 telegram_service.send_message(chat_id, caption)
-                
+
         # Enviar pie de mensaje
         footer = formatters.format_quote_footer()
         telegram_service.send_message(chat_id, footer)
@@ -219,11 +194,11 @@ def _run_search(chat_id: int, context: dict, user_image_bytes: bytes | None = No
             telegram_service.send_message(chat_id, text)
         return
 
-    # Guardamos el estado en lugar de limpiar la sesión para que recuerde el contexto
+    # Guardamos el estado para que recuerde el contexto
     missing_fields = []
     if not context.get("brand"): missing_fields.append("brand")
     if not context.get("model"): missing_fields.append("model")
-    
+
     if missing_fields:
         if "brand" in missing_fields:
             supabase_service.save_session(chat_id, "awaiting_brand", context)
@@ -231,8 +206,100 @@ def _run_search(chat_id: int, context: dict, user_image_bytes: bytes | None = No
             supabase_service.save_session(chat_id, "awaiting_model", context)
     else:
         supabase_service.clear_session(chat_id)
-        
+
     telegram_service.send_message(chat_id, format_no_results(context))
+
+
+def _apply_visual_rerank(
+    user_image_bytes: bytes,
+    products: list[dict],
+    sources: list[str],
+) -> tuple[list[dict], list[str]]:
+    """
+    Descarga imágenes de los top-3 candidatos y pide a Claude que confirme
+    cuál coincide visualmente con la foto del usuario.
+    Reordena el resultado poniendo el match arriba.
+    """
+    candidates = []
+    for p in products[:3]:
+        image_url = p.get("image_url")
+        if image_url:
+            try:
+                cand_bytes = telegram_service.download_image_from_url(image_url)
+                candidates.append({"id": p["id"], "name": p["name_es"], "image_bytes": cand_bytes})
+            except Exception as e:
+                logger.warning(f"[photo_handler] Error descargando candidato visual: {e}")
+
+    if not candidates:
+        return products, sources
+
+    try:
+        comparison = claude_service.compare_parts(user_image_bytes, candidates)
+        if comparison.get("match_found"):
+            best_idx = comparison.get("best_match_index")
+            if best_idx and 1 <= best_idx <= len(candidates):
+                matched_id = candidates[best_idx - 1]["id"]
+                matched_prod = next((p for p in products if p["id"] == matched_id), None)
+                if matched_prod:
+                    products.remove(matched_prod)
+                    products.insert(0, matched_prod)
+                    matched_prod["_is_visual_match"] = True
+                    if "visual" not in sources:
+                        sources.append("visual")
+                    logger.info(f"[photo_handler] Re-rank visual: {matched_prod['name_es']}")
+    except Exception as e:
+        logger.error(f"[photo_handler] Error en validación visual: {e}")
+
+    return products, sources
+
+
+def _visual_search_from_bucket(
+    user_image_bytes: bytes,
+    context: dict,
+) -> tuple[list[dict], list[str]]:
+    """
+    Búsqueda visual directa contra el catálogo cuando el texto no encontró nada.
+    Obtiene hasta 20 productos con imagen (filtrados por marca si existe)
+    y pide a Claude que identifique cuál coincide con la foto del usuario.
+    """
+    brand = context.get("brand")
+    pool = supabase_service.get_products_with_images(brand=brand, limit=20)
+
+    if not pool:
+        logger.info("[photo_handler] Pool visual vacío")
+        return [], []
+
+    candidates = []
+    for p in pool:
+        image_url = p.get("image_url")
+        if image_url:
+            try:
+                img_bytes = telegram_service.download_image_from_url(image_url)
+                candidates.append({"id": p["id"], "name": p["name_es"], "image_bytes": img_bytes})
+            except Exception as e:
+                logger.warning(f"[photo_handler] No se pudo descargar imagen de pool: {e}")
+
+    if not candidates:
+        return [], []
+
+    logger.info(f"[photo_handler] Búsqueda visual directa con {len(candidates)} candidatos del bucket")
+
+    try:
+        comparison = claude_service.compare_parts(user_image_bytes, candidates)
+        if comparison.get("match_found"):
+            best_idx = comparison.get("best_match_index")
+            if best_idx and 1 <= best_idx <= len(candidates):
+                matched_id = candidates[best_idx - 1]["id"]
+                matched_prod = next((p for p in pool if p["id"] == matched_id), None)
+                if matched_prod:
+                    matched_prod["_is_visual_match"] = True
+                    logger.info(f"[photo_handler] Coincidencia visual directa: {matched_prod['name_es']}")
+                    return [matched_prod], ["visual"]
+    except Exception as e:
+        logger.error(f"[photo_handler] Error en búsqueda visual directa: {e}")
+
+    return [], []
+
 
 
 def _extract_part_from_text(text: str) -> dict | None:

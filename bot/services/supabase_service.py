@@ -201,12 +201,37 @@ def search_manual_index(parsed: dict) -> list[dict]:
         return []
 
 
+
+def get_products_with_images(brand: str | None = None, limit: int = 20) -> list[dict]:
+    """
+    Devuelve productos que tienen imagen en el bucket.
+    Se usa como pool para búsqueda visual cuando el texto no encuentra nada.
+    Opcionalmente filtra por marca para reducir el espacio de comparación.
+    """
+    try:
+        q = (
+            _supabase.table("bot_products_view")
+            .select("id, sku, name_es, description_es, price_public, price_technician, price_wholesale, stock_quantity, brand_name, image_url")
+            .eq("is_active", True)
+            .neq("image_url", None)  # Solo productos con imagen
+        )
+        if brand:
+            q = q.ilike("brand_name", f"%{brand}%")
+
+        r = q.limit(limit).execute()
+        return r.data or []
+    except Exception as e:
+        print(f"[supabase] Error get_products_with_images: {e}")
+        return []
+
+
 # Etiquetas legibles para cada fuente de búsqueda
 SOURCE_LABELS: dict[str, str] = {
     "code":   "🗄️ BD · código exacto",
     "fts":    "🗄️ BD · búsqueda por texto",
     "ilike":  "🗄️ BD · búsqueda aproximada",
     "model":  "🗄️ BD · compatibilidad de modelo",
+    "visual": "👁️ Comparación visual con catálogo",
     "manual": "📄 Manuales técnicos PDF",
     "gdrive": "📄 Manuales PDF (Drive)",
     "web":    "🌐 Web fabricante",
