@@ -130,8 +130,12 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
                 "id, sku, part_number, name_es, description_es, location, "
                 "price_public, price_technician, price_wholesale, stock_quantity, image_url"
             ).eq("is_active", True)
+            or_conditions = []
             for w in words:
-                q = q.or_(f"name_es.ilike.%{w}%,sku.ilike.%{w}%")
+                or_conditions.append(f"name_es.ilike.%{w}%")
+                or_conditions.append(f"sku.ilike.%{w}%")
+            if or_conditions:
+                q = q.or_(",".join(or_conditions))
 
             brand_name_resolved = brand
             if brand:

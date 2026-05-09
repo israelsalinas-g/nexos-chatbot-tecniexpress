@@ -24,11 +24,11 @@ Eres un experto en repuestos de lavadoras y secadoras. Analiza la imagen del rep
 
 Responde SOLO con JSON válido, sin texto adicional. Formato:
 {
-  "part_type": "nombre técnico del repuesto en español",
+  "part_type": "nombre técnico corto y simple (ej: botonera, placa, bomba)",
   "possible_brands": ["marca1", "marca2"],
   "description_es": "descripción detallada del repuesto visible en la imagen",
   "part_number_visible": "número de parte si es legible en la imagen, o null",
-  "search_terms": ["término1", "término2"],
+  "search_terms": ["palabra_clave1", "palabra_clave2"],
   "confidence": 0.0,
   "needs_more_info": false,
   "missing_info": "qué información falta para una búsqueda precisa, o null"
@@ -36,7 +36,8 @@ Responde SOLO con JSON válido, sin texto adicional. Formato:
 
 Reglas:
 - Si no puedes identificar claramente el repuesto, indica needs_more_info: true
-- Sé específico: no digas "parte de lavadora" sino "bomba de drenaje", "rodamiento", "sello de tina", etc.
+- Sé específico pero BREVE: usa "bomba drenaje", "rodamiento", "botonera", "tarjeta".
+- EVITA frases largas. En lugar de "Módulo de control de botones de membrana", usa solo "botonera membrana" o "panel control".
 - confidence: qué tan seguro estás de la identificación (0.0 a 1.0)
 """.strip()
 
