@@ -92,67 +92,53 @@ def _handle_label(chat_id: int, image_bytes: bytes, caption: str, context: dict)
 
 
 def _handle_part_photo(chat_id: int, image_bytes: bytes, caption: str, context: dict) -> None:
-    """Flujo: foto de repuesto → identificar → buscar siempre."""
-    # Generar embedding CLIP antes de cualquier búsqueda
+    """Flujo: foto de repuesto → identificar por CLIP → buscar."""
     clip_embedding: list[float] | None = None
     try:
         from bot.services import clip_service
         clip_embedding = clip_service.get_image_embedding(image_bytes)
-        logger.info("[photo_handler] Embedding CLIP generado (512 dims)")
+        logger.info("[photo_handler] Embedding CLIP generado")
     except Exception as e:
-        logger.warning(f"[photo_handler] CLIP no disponible, continuando sin embedding: {e}")
+        logger.warning(f"[photo_handler] CLIP no disponible: {e}")
 
+    # Búsqueda por CLIP (Embeddings) - PRIORIDAD
+    clip_products = []
+    if clip_embedding:
+        from bot.services import supabase_service
+        clip_products = supabase_service.search_by_image_embedding(clip_embedding, limit=5)
+        # Filtrar por confianza mínima (similitud pgvector > 0.65 es buena para CLIP-ViT-B-32)
+        # Nota: pgvector usa <-> (distancia euclidiana) o <=> (distancia coseno). 
+        # Nuestro RPC search_by_image_vector devuelve 'similarity' como (1 - distancia).
+        confident_clip = [p for p in clip_products if p.get("_clip_similarity", 0.0) > 0.70]
+        
+        if confident_clip:
+            logger.info(f"[photo_handler] Match CLIP confiable encontrado ({len(confident_clip)} prods)")
+            _run_search(chat_id, context, image_bytes, clip_embedding=clip_embedding, force_results=confident_clip)
+            return
+
+    # Si no hay match CLIP directo muy confiable, usamos Claude (Anthropic) pero lo ponemos en "pausa" informativa
+    # mientras le damos utilidad real. Lo usamos para extraer términos de texto por si acaso.
     try:
+        # Seguimos usando Claude para no romper el flujo de 'search_terms', pero lo tratamos como secundario
         part_info = claude_service.identify_part(image_bytes, caption)
+        part_type = part_info.get("part_type", "")
+        search_terms = part_info.get("search_terms") or ([part_type] if part_type else [])
+        
+        search_context = {
+            **context,
+            "part": part_type or caption.strip(),
+            "search_terms": search_terms or [caption.strip()],
+        }
+        
+        # Si CLIP encontró algo aunque no sea 100% confiable, lo pasamos a _run_search para el rerank
+        _run_search(chat_id, search_context, image_bytes, clip_embedding=clip_embedding)
+        
     except Exception as e:
         logger.error(f"[photo_handler] Falló identificación visual (Claude): {e}")
         if caption:
-            telegram_service.send_message(chat_id, "🔍 No pude analizar la imagen, buscando con tu descripción...")
-            _run_search(
-                chat_id,
-                {**context, "part": caption.strip(), "search_terms": [caption.strip()]},
-                user_image_bytes=image_bytes,
-                clip_embedding=clip_embedding,
-            )
+            _run_search(chat_id, {**context, "part": caption.strip()}, image_bytes, clip_embedding=clip_embedding)
         else:
-            telegram_service.send_message(
-                chat_id,
-                "⚠️ No pude identificar el repuesto. Por favor descríbelo con texto.",
-            )
-        return
-
-    part_type = part_info.get("part_type", "")
-    search_terms = part_info.get("search_terms") or ([part_type] if part_type else [])
-    possible_brands = part_info.get("possible_brands") or []
-    confidence = part_info.get("confidence", 0)
-
-    # Si Claude no pudo identificar nada útil, pedir descripción
-    if not part_type and not search_terms and not caption:
-        telegram_service.send_message(
-            chat_id,
-            "🔍 No pude identificar el repuesto claramente. "
-            "¿Podrías describir qué pieza es o agregar un texto al enviar la foto?",
-        )
-        return
-
-    # Construir contexto: si no hay part_type pero sí caption, usar el caption
-    search_context = {
-        **context,
-        "part": part_type or caption.strip(),
-        "search_terms": search_terms or [caption.strip()],
-    }
-    if not search_context.get("brand") and len(possible_brands) == 1:
-        search_context["brand"] = possible_brands[0]
-
-    # Mostrar qué identificó Claude (con nota de confianza si es baja)
-    confidence_note = " <i>(identificación aproximada)</i>" if confidence < 0.5 else ""
-    if part_type:
-        telegram_service.send_message(
-            chat_id,
-            f"🔍 Identificado: <b>{part_type}</b>{confidence_note}\nBuscando en inventario...",
-        )
-
-    _run_search(chat_id, search_context, image_bytes, clip_embedding=clip_embedding)
+            telegram_service.send_message(chat_id, "⚠️ No pude identificar la pieza. Intenta describirla con texto.")
 
 
 def _run_search(
@@ -160,8 +146,13 @@ def _run_search(
     context: dict,
     user_image_bytes: bytes | None = None,
     clip_embedding: list[float] | None = None,
+    force_results: list[dict] | None = None,
 ) -> None:
-    products, sources = supabase_service.search_products(context)
+    if force_results:
+        products = force_results
+        sources = ["clip"]
+    else:
+        products, sources = supabase_service.search_products(context)
 
     # ── Re-rank visual de candidatos de texto ────────────────────────────────
     if products and (clip_embedding or user_image_bytes):

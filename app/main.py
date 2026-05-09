@@ -2,8 +2,14 @@ import hmac
 import logging
 from contextlib import asynccontextmanager
 
+# pyrefly: ignore [missing-import]
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Response
-from fastapi.responses import JSONResponse
+try:
+    # pyrefly: ignore [missing-import]
+    from fastapi.responses import JSONResponse
+except ImportError:
+    # pyrefly: ignore [missing-import]
+    from starlette.responses import JSONResponse
 
 from bot.config import TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, APP_URL
 from bot.services import telegram_service
@@ -15,7 +21,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Bot iniciando...")
+    logger.info("Bot iniciando — pre-cargando modelo CLIP...")
+    try:
+        from bot.services import clip_service  # dispara carga del modelo al inicio
+        logger.info("Modelo CLIP listo.")
+    except Exception as e:
+        logger.warning(f"CLIP no disponible: {e}. Búsqueda visual usará Claude como fallback.")
     yield
     logger.info("Bot detenido.")
 
@@ -69,6 +80,81 @@ async def setup_webhook():
 @app.get("/webhook-info")
 async def webhook_info():
     return telegram_service.get_webhook_info()
+
+
+@app.post("/admin/populate-embeddings")
+async def populate_embeddings(request: Request, background_tasks: BackgroundTasks):
+    """
+    Genera embeddings CLIP para todas las imágenes del catálogo que no los tengan.
+    Requiere header: X-Admin-Token igual a TELEGRAM_WEBHOOK_SECRET.
+    Corre en background para no bloquear la respuesta.
+    """
+    token = request.headers.get("X-Admin-Token", "")
+    if not hmac.compare_digest(token, TELEGRAM_WEBHOOK_SECRET):
+        raise HTTPException(status_code=403, detail="Token inválido")
+
+    background_tasks.add_task(_run_populate_embeddings)
+    return {"status": "iniciado", "message": "Poblando embeddings en background. Revisa los logs."}
+
+
+def _run_populate_embeddings() -> None:
+    """Genera embeddings CLIP para todas las imágenes del catálogo sin embedding."""
+    import time
+    # pyrefly: ignore [missing-import]
+    import httpx
+    from bot.services import clip_service, supabase_service
+
+    logger.info("[populate] Iniciando generación de embeddings CLIP...")
+
+    try:
+        r = supabase_service._supabase.table("product_images").select("id, product_id, url").execute()
+        images = r.data or []
+    except Exception as e:
+        logger.error(f"[populate] Error leyendo product_images: {e}")
+        return
+
+    try:
+        r2 = supabase_service._supabase.table("product_image_embeddings").select("product_image_id").execute()
+        existing = {row["product_image_id"] for row in (r2.data or [])}
+    except Exception as e:
+        logger.error(f"[populate] Error leyendo embeddings existentes: {e}")
+        existing = set()
+
+    to_process = [img for img in images if img["id"] not in existing]
+    logger.info(f"[populate] {len(to_process)} imágenes a procesar (de {len(images)} totales).")
+
+    ok = errors = skipped = 0
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; TecniExpressBot/1.0)"}
+
+    with httpx.Client(follow_redirects=True, headers=headers, timeout=30) as client:
+        for idx, img in enumerate(to_process, 1):
+            url = img.get("url", "")
+            if not url:
+                skipped += 1
+                continue
+            try:
+                resp = client.get(url)
+                resp.raise_for_status()
+                embedding = clip_service.get_image_embedding(resp.content)
+                supabase_service._supabase.table("product_image_embeddings").upsert(
+                    {
+                        "product_id": img["product_id"],
+                        "product_image_id": img["id"],
+                        "image_url": url,
+                        "embedding": embedding,
+                        "model_version": "clip-vit-b-32",
+                    },
+                    on_conflict="product_image_id",
+                ).execute()
+                ok += 1
+                if idx % 10 == 0:
+                    logger.info(f"[populate] Progreso: {idx}/{len(to_process)}")
+            except Exception as e:
+                logger.error(f"[populate] Error en imagen {img['id']}: {e}")
+                errors += 1
+            time.sleep(0.2)
+
+    logger.info(f"[populate] Completado — OK: {ok} | Errores: {errors} | Sin URL: {skipped}")
 
 
 def _process_update(update: dict) -> None:
