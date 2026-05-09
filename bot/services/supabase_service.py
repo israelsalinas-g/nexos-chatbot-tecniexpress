@@ -84,7 +84,11 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
             results_by_id[product["id"]] = product
         sources.extend(code_sources)
 
-    fts_query = " ".join(filter(None, [part] + search_terms))
+    # Para FTS estricto (que usa AND interno), usamos solo el 'part' principal.
+    fts_query = part.strip()
+    
+    # Para el fallback relajado (OR interno), usamos todos los términos
+    all_terms_str = " ".join(filter(None, [part] + search_terms))
 
     # Etapa 1: FTS por texto (Usando la nueva RPC v2 optimizada)
     if fts_query.strip():
@@ -123,9 +127,9 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
             print(f"[supabase] Error compatibility: {e}")
 
     # Etapa 3: ILIKE fallback si FTS no devolvió nada
-    if not results_by_id and fts_query.strip():
+    if not results_by_id and all_terms_str.strip():
         try:
-            words = [w for w in fts_query.split() if len(w) > 2][:3]
+            words = [w for w in all_terms_str.split() if len(w) > 2][:5]
             q = _supabase.table("bot_products_view").select(
                 "id, sku, part_number, name_es, description_es, location, "
                 "price_public, price_technician, price_wholesale, stock_quantity, image_url"
