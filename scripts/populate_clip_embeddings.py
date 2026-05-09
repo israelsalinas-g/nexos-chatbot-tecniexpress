@@ -21,9 +21,11 @@ from pathlib import Path
 # Permite importar bot.services desde la raíz del proyecto
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# pyrefly: ignore [missing-import]
 from dotenv import load_dotenv
 load_dotenv()
 
+# pyrefly: ignore [missing-import]
 import httpx
 from supabase import create_client, Client
 
