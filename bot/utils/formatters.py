@@ -56,6 +56,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "gdrive": "📄 Manuales PDF (Drive)",
     "web":    "🌐 Web fabricante",
     "visual": "👁️ Verificación Visual",
+    "clip":   "🖼️ Búsqueda visual CLIP",
 }
 
 

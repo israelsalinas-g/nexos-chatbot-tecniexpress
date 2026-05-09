@@ -225,6 +225,29 @@ def get_products_with_images(brand: str | None = None, limit: int = 20) -> list[
         return []
 
 
+def search_by_image_embedding(embedding: list[float], limit: int = 3) -> list[dict]:
+    """
+    Búsqueda por similitud visual usando el embedding CLIP de la imagen del usuario.
+    Llama al RPC search_by_image_vector y normaliza el resultado al mismo shape
+    que usan los demás métodos de búsqueda.
+    Retorna lista vacía si pgvector no está activo o la tabla está sin datos.
+    """
+    try:
+        r = _supabase.rpc(
+            "search_by_image_vector",
+            {"query_embedding": embedding, "p_limit": limit},
+        ).execute()
+        rows = r.data or []
+        for row in rows:
+            row["id"] = row.pop("product_id")
+            row["_clip_similarity"] = row.pop("similarity", 0.0)
+            row["_is_visual_match"] = True
+        return rows
+    except Exception as e:
+        print(f"[supabase] Error search_by_image_embedding: {e}")
+        return []
+
+
 # Etiquetas legibles para cada fuente de búsqueda
 SOURCE_LABELS: dict[str, str] = {
     "code":   "🗄️ BD · código exacto",
@@ -232,6 +255,7 @@ SOURCE_LABELS: dict[str, str] = {
     "ilike":  "🗄️ BD · búsqueda aproximada",
     "model":  "🗄️ BD · compatibilidad de modelo",
     "visual": "👁️ Comparación visual con catálogo",
+    "clip":   "🖼️ Búsqueda visual CLIP",
     "manual": "📄 Manuales técnicos PDF",
     "gdrive": "📄 Manuales PDF (Drive)",
     "web":    "🌐 Web fabricante",
