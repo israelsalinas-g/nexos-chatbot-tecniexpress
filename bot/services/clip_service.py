@@ -1,5 +1,6 @@
 import io
 import logging
+# pyrefly: ignore [missing-import]
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,9 @@ def _load_model():
         return True
     
     try:
+        # pyrefly: ignore [missing-import]
         import torch
+        # pyrefly: ignore [missing-import]
         import open_clip
         logger.info("[clip_service] Cargando modelo CLIP (open-clip-torch)...")
         model, _, preprocess = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
@@ -41,6 +44,7 @@ def get_image_embedding(image_bytes: bytes) -> list[float]:
         return []
 
     try:
+        # pyrefly: ignore [missing-import]
         import torch
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         tensor = _PROCESSOR(image).unsqueeze(0).to(_DEVICE)
