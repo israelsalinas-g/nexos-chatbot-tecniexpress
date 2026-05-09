@@ -61,10 +61,11 @@ def search_by_code(code: str) -> tuple[list[dict], list[str]]:
 
 def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
     """
-    Búsqueda en 3 etapas:
-    1. FTS por nombre/SKU/part_number (RPC)
-    2. Compatibilidad por modelo de equipo (RPC)
-    3. ILIKE palabra por palabra como último recurso
+    Búsqueda en 4 etapas (más flexible):
+    1. Búsqueda por palabras individuales (split del query)
+    2. Combinación marca + tipo de producto
+    3. FTS por texto completo
+    4. ILIKE como fallback final
 
     Retorna (productos deduplicados max 5, lista de fuentes que encontraron resultados).
     """
@@ -84,14 +85,160 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
             results_by_id[product["id"]] = product
         sources.extend(code_sources)
 
-    # Para FTS estricto (que usa AND interno), usamos solo el 'part' principal.
-    fts_query = part.strip()
-    
-    # Para el fallback relajado (OR interno), usamos todos los términos
-    all_terms_str = " ".join(filter(None, [part] + search_terms))
+    # Consolidar todos los términos de búsqueda
+    all_terms = list(set(filter(None, [part] + search_terms)))
+    all_terms_str = " ".join(all_terms)
 
-    # Etapa 1: FTS por texto (Usando la nueva RPC v2 optimizada)
-    if fts_query.strip():
+    # ============================================================
+    # NUEVA ETAPA 1: Búsqueda por palabras individuales
+    # Busca cada palabra por separado para encontrar productos similares
+    # ============================================================
+    individual_words = [w.strip() for w in all_terms_str.split() if len(w.strip()) >= 3]
+    
+    for word in individual_words[:5]:  # Máximo 5 palabras
+        try:
+            # Buscar en múltiples campos vía ILIKE
+            q = _supabase.table("products").select(
+                "id, sku, part_number, name_es, description_es, location, "
+                "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
+                "compatible_models, tags"
+            ).eq("is_active", True)
+            
+            # Condiciones OR para cada campo
+            or_conditions = [
+                f"name_es.ilike.%{word}%",
+                f"sku.ilike.%{word}%",
+                f"part_number.ilike.%{word}%",
+                f"description_es.ilike.%{word}%"
+            ]
+            q = q.or_(",".join(or_conditions))
+            
+            # Filtrar por marca si se especificó
+            if brand:
+                brand_res = _supabase.table("brands").select("id").ilike(
+                    "name", f"%{brand}%"
+                ).limit(1).execute()
+                if brand_res.data:
+                    q = q.eq("brand_id", brand_res.data[0]["id"])
+
+            r = q.limit(10).execute()
+            if r.data:
+                sources.append("word_match")
+                for prod in r.data:
+                    # Obtener el nombre de la marca para cada producto
+                    if prod.get("brand_id"):
+                        brand_row = _supabase.table("brands").select("name").eq(
+                            "id", prod["brand_id"]
+                        ).maybe_single().execute()
+                        if brand_row.data:
+                            prod["brand_name"] = brand_row.data["name"]
+                    
+                    # Obtener imagen primary
+                    img_row = _supabase.table("product_images").select("url").eq(
+                        "product_id", prod["id"]
+                    ).eq("is_primary", True).maybe_single().execute()
+                    if img_row.data:
+                        prod["image_url"] = img_row.data["url"]
+                    
+                    results_by_id[prod["id"]] = prod
+        except Exception as e:
+            print(f"[supabase] Error word search '{word}': {e}")
+
+    # ============================================================
+    # NUEVA ETAPA 1.5: Búsqueda SOLO por marca
+    # Si el usuario solo escribe "LG" o "Samsung", mostrar productos de esa marca
+    # ============================================================
+    if brand and not part and not model and not code:
+        possible_brands = ["LG", "Samsung", "Mabe", "GE", "Whirlpool", "Frigidaire"]
+        brand_normalized = brand.strip().upper()
+        
+        # Verificar si lo que escribió es una marca válida
+        matched_brand = None
+        for b in possible_brands:
+            if b.lower() in brand_normalized.lower() or brand_normalized.lower() in b.lower():
+                matched_brand = b
+                break
+        
+        if matched_brand:
+            try:
+                brand_res = _supabase.table("brands").select("id").ilike(
+                    "name", f"%{matched_brand}%"
+                ).limit(1).execute()
+                
+                if brand_res.data:
+                    brand_id = brand_res.data[0]["id"]
+                    q = _supabase.table("products").select(
+                        "id, sku, part_number, name_es, description_es, location, "
+                        "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
+                        "compatible_models, tags"
+                    ).eq("brand_id", brand_id).eq("is_active", True).limit(10).execute()
+                    
+                    if q.data:
+                        sources.append("brand_only")
+                        for prod in q.data:
+                            prod["brand_name"] = matched_brand
+                            # Obtener imagen
+                            img_row = _supabase.table("product_images").select("url").eq(
+                                "product_id", prod["id"]
+                            ).eq("is_primary", True).maybe_single().execute()
+                            if img_row.data:
+                                prod["image_url"] = img_row.data["url"]
+                            results_by_id[prod["id"]] = prod
+            except Exception as e:
+                print(f"[supabase] Error brand-only search: {e}")
+
+    # ============================================================
+    # NUEVA ETAPA 2: Búsqueda combinada marca + tipo de producto
+    # Ejemplo: "actuador Whirlpool" o "Banda LG"
+    # ============================================================
+    if brand and part:
+        combined_query = f"{part} {brand}".strip()
+        try:
+            q = _supabase.table("products").select(
+                "id, sku, part_number, name_es, description_es, location, "
+                "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
+                "compatible_models, tags"
+            ).eq("is_active", True)
+            
+            # Buscar productos que contengan tanto el tipo como la marca
+            or_conditions = [
+                f"name_es.ilike.%{part}%",
+                f"description_es.ilike.%{part}%"
+            ]
+            q = q.or_(",".join(or_conditions))
+            
+            # Filtrar por marca específica
+            brand_res = _supabase.table("brands").select("id").ilike(
+                "name", f"%{brand}%"
+            ).limit(1).execute()
+            if brand_res.data:
+                q = q.eq("brand_id", brand_res.data[0]["id"])
+                brand_name = brand_res.data[0].get("name", brand)
+
+            r = q.limit(10).execute()
+            if r.data:
+                sources.append("brand_product")
+                for prod in r.data:
+                    prod["brand_name"] = brand_name
+                    # Obtener imagen
+                    img_row = _supabase.table("product_images").select("url").eq(
+                        "product_id", prod["id"]
+                    ).eq("is_primary", True).maybe_single().execute()
+                    if img_row.data:
+                        prod["image_url"] = img_row.data["url"]
+                    
+                    if prod["id"] not in results_by_id:
+                        results_by_id[prod["id"]] = prod
+                    else:
+                        results_by_id[prod["id"]]["_double_match"] = True
+        except Exception as e:
+            print(f"[supabase] Error brand+product search: {e}")
+
+    # ============================================================
+    # ETAPA 3: FTS por texto (solo si hay query y no hay muchos resultados)
+    # ============================================================
+    if all_terms_str.strip() and len(results_by_id) < 3:
+        fts_query = part.strip() if part else all_terms_str.strip()
         try:
             r = _supabase.rpc("search_products_v2", {
                 "p_query": fts_query,
@@ -106,7 +253,9 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
         except Exception as e:
             print(f"[supabase] Error FTS v2: {e}")
 
-    # Etapa 2: Compatibilidad por modelo
+    # ============================================================
+    # ETAPA 4: Compatibilidad por modelo (si hay modelo)
+    # ============================================================
     if model:
         try:
             r = _supabase.rpc("search_products_by_model", {
@@ -126,18 +275,22 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
         except Exception as e:
             print(f"[supabase] Error compatibility: {e}")
 
-    # Etapa 3: ILIKE fallback si FTS no devolvió nada
+    # ============================================================
+    # ETAPA 5: ILIKE fallback general (último recurso)
+    # ============================================================
     if not results_by_id and all_terms_str.strip():
         try:
             words = [w for w in all_terms_str.split() if len(w) > 2][:5]
-            q = _supabase.table("bot_products_view").select(
+            q = _supabase.table("products").select(
                 "id, sku, part_number, name_es, description_es, location, "
-                "price_public, price_technician, price_wholesale, stock_quantity, image_url"
+                "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
+                "compatible_models, tags"
             ).eq("is_active", True)
             or_conditions = []
             for w in words:
                 or_conditions.append(f"name_es.ilike.%{w}%")
                 or_conditions.append(f"sku.ilike.%{w}%")
+                or_conditions.append(f"part_number.ilike.%{w}%")
             if or_conditions:
                 q = q.or_(",".join(or_conditions))
 
@@ -150,7 +303,7 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
                     q = q.eq("brand_id", brand_res.data[0]["id"])
                     brand_name_resolved = brand_res.data[0]["name"]
 
-            r_ilike = q.limit(5).execute()
+            r_ilike = q.limit(10).execute()
             if r_ilike.data:
                 sources.append("ilike")
                 for product in r_ilike.data:
@@ -160,13 +313,14 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
         except Exception as e:
             print(f"[supabase] Error ILIKE fallback: {e}")
 
+    # Ordenar resultados: primero los que tienen doble match
     sorted_results = sorted(
         results_by_id.values(),
         key=lambda p: (p.get("_double_match", False), p.get("rank", 0)),
         reverse=True,
     )
 
-    return sorted_results[:5], sources
+    return sorted_results[:5], list(set(sources))
 
 
 def search_manual_index(parsed: dict) -> list[dict]:
@@ -209,17 +363,38 @@ def get_products_with_images(brand: str | None = None, limit: int = 20) -> list[
     Opcionalmente filtra por marca para reducir el espacio de comparación.
     """
     try:
-        q = (
-            _supabase.table("bot_products_view")
-            .select("id, sku, name_es, description_es, price_public, price_technician, price_wholesale, stock_quantity, brand_name, image_url")
-            .eq("is_active", True)
-            .neq("image_url", None)  # Solo productos con imagen
-        )
+        # Primero obtener IDs de productos con imagen
+        img_q = _supabase.table("product_images").select("product_id, url").eq("is_primary", True)
+        img_r = img_q.execute()
+        
+        if not img_r.data:
+            return []
+        
+        product_ids_with_images = [row["product_id"] for row in img_r.data]
+        image_urls = {row["product_id"]: row["url"] for row in img_r.data}
+        
+        # Ahora obtener los productos
+        q = _supabase.table("products").select(
+            "id, sku, part_number, name_es, description_es, location, "
+            "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
+            "compatible_models, tags"
+        ).eq("is_active", True).in_("id", product_ids_with_images)
+        
         if brand:
-            q = q.ilike("brand_name", f"%{brand}%")
+            brand_res = _supabase.table("brands").select("id").ilike(
+                "name", f"%{brand}%"
+            ).limit(1).execute()
+            if brand_res.data:
+                q = q.eq("brand_id", brand_res.data[0]["id"])
 
         r = q.limit(limit).execute()
-        return r.data or []
+        
+        # Agregar image_url a cada producto
+        results = r.data or []
+        for prod in results:
+            prod["image_url"] = image_urls.get(prod["id"])
+        
+        return results
     except Exception as e:
         print(f"[supabase] Error get_products_with_images: {e}")
         return []
@@ -250,13 +425,16 @@ def search_by_image_embedding(embedding: list[float], limit: int = 3) -> list[di
 
 # Etiquetas legibles para cada fuente de búsqueda
 SOURCE_LABELS: dict[str, str] = {
-    "code":   "🗄️ BD · código exacto",
-    "fts":    "🗄️ BD · búsqueda por texto",
-    "ilike":  "🗄️ BD · búsqueda aproximada",
-    "model":  "🗄️ BD · compatibilidad de modelo",
-    "visual": "👁️ Comparación visual con catálogo",
-    "clip":   "🖼️ Búsqueda visual CLIP",
-    "manual": "📄 Manuales técnicos PDF",
-    "gdrive": "📄 Manuales PDF (Drive)",
-    "web":    "🌐 Web fabricante",
+    "code":         "🗄️ BD · código exacto",
+    "word_match":   "🗄️ BD · palabras relacionadas",
+    "brand_only":   "🗄️ BD · productos de marca",
+    "brand_product": "🗄️ BD · marca + producto",
+    "fts":          "🗄️ BD · búsqueda por texto",
+    "ilike":        "🗄️ BD · búsqueda aproximada",
+    "model":        "🗄️ BD · compatibilidad de modelo",
+    "visual":       "👁️ Comparación visual con catálogo",
+    "clip":         "🖼️ Búsqueda visual CLIP",
+    "manual":       "📄 Manuales técnicos PDF",
+    "gdrive":       "📄 Manuales PDF (Drive)",
+    "web":          "🌐 Web fabricante",
 }
