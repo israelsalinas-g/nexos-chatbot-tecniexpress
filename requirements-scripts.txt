@@ -1,0 +1,9 @@
+# Dependencias para scripts locales (NO se instalan en Railway)
+# Uso: pip install -r requirements-scripts.txt
+open-clip-torch>=3.0.0
+torch>=2.6.0
+torchvision>=0.21.0
+Pillow>=10.0.0
+httpx>=0.27.0
+python-dotenv>=1.0.0
+supabase>=2.10.0
