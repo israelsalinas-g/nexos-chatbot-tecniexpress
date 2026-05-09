@@ -98,106 +98,53 @@ def _handle_label(chat_id: int, image_bytes: bytes, caption: str, context: dict)
 
 
 def _handle_part_photo(chat_id: int, image_bytes: bytes, caption: str, context: dict) -> None:
-    """Flujo: foto de repuesto → identificar por CLIP → buscar."""
+    """Flujo: foto de repuesto → CLIP embedding → búsqueda visual/texto. Sin Anthropic."""
+    # 1. Generar embedding CLIP
     clip_embedding: list[float] | None = None
-    clip_available = False
-    
-    # Intentar cargar CLIP para búsqueda visual
     try:
         from bot.services import clip_service
-        telegram_service.send_message(chat_id, "🖼️ Generando descripción de la imagen...")
         clip_embedding = clip_service.get_image_embedding(image_bytes)
-        clip_available = True
-        logger.info("[photo_handler] Embedding CLIP generado")
+        logger.info("[photo_handler] Embedding CLIP generado (512 dims)")
     except Exception as e:
         logger.warning(f"[photo_handler] CLIP no disponible: {e}")
 
-    # Búsqueda por CLIP (Embeddings) - PRIORIDAD
-    clip_products = []
-    if clip_available and clip_embedding:
-        try:
-            telegram_service.send_message(chat_id, "🔎 Buscando en el catálogo...")
-            clip_products = supabase_service.search_by_image_embedding(clip_embedding, limit=5)
-            
-            # Umbral de similitud más relajado para pgvector
-            confident_clip = [p for p in clip_products if p.get("_clip_similarity", 0.0) > 0.50]
-            
-            if confident_clip:
-                logger.info(f"[photo_handler] Match CLIP confiable encontrado ({len(confident_clip)} prods)")
-                _run_search(chat_id, context, image_bytes, clip_embedding=clip_embedding, force_results=confident_clip)
-                return
-        except Exception as e:
-            logger.error(f"[photo_handler] Error en búsqueda CLIP: {e}")
+    # 2. Construir contexto de texto desde caption (sin Claude)
+    search_context = {**context}
+    if caption.strip():
+        search_context["part"] = caption.strip()
+        search_context["search_terms"] = [w for w in caption.split() if len(w) > 2]
 
-    # Usar Claude para extraer información de la imagen
-    try:
-        telegram_service.send_message(chat_id, "🤖 Identificando el repuesto...")
-        part_info = claude_service.identify_part(image_bytes, caption)
-        part_type = part_info.get("part_type", "")
-        possible_brands = part_info.get("possible_brands") or []
-        search_terms = part_info.get("search_terms") or ([part_type] if part_type else [])
-        confidence = part_info.get("confidence", 0)
-        
-        # Construir contexto con la información extraída
-        search_context = {
-            **context,
-            "part": part_type or caption.strip(),
-            "search_terms": search_terms or [caption.strip()],
-        }
-        
-        # Si Claude detectó una marca, usarla
-        if possible_brands and not context.get("brand"):
-            search_context["brand"] = possible_brands[0]
-        
-        logger.info(f"[photo_handler] Claude identificó: {part_type}, confianza: {confidence}")
-        
-        # Buscar productos con el contexto generado
-        _run_search(chat_id, search_context, image_bytes, clip_embedding=clip_embedding)
-        
-    except Exception as e:
-        logger.error(f"[photo_handler] Falló identificación visual (Claude): {e}")
-        if caption:
-            _run_search(chat_id, {**context, "part": caption.strip()}, image_bytes, clip_embedding=clip_embedding)
-        else:
-            telegram_service.send_message(
-                chat_id,
-                "⚠️ No pude identificar la pieza. Intenta describirla con texto o escribe el nombre del repuesto.",
-            )
+    # 3. Ejecutar búsqueda (CLIP + texto)
+    if clip_embedding or search_context.get("part"):
+        _run_search(chat_id, search_context, clip_embedding=clip_embedding)
+    else:
+        telegram_service.send_message(
+            chat_id,
+            "🔍 No encontré el repuesto visualmente. Descríbelo con texto, por ejemplo:\n"
+            "<i>capacitor LG lavadora, motor Whirlpool secadora...</i>",
+        )
 
 
 def _run_search(
     chat_id: int,
     context: dict,
-    user_image_bytes: bytes | None = None,
     clip_embedding: list[float] | None = None,
-    force_results: list[dict] | None = None,
 ) -> None:
     try:
-        if force_results:
-            products = force_results
-            sources = ["clip"]
-        else:
-            telegram_service.send_message(chat_id, "🔍 Buscando en la base de datos...")
+        # Búsqueda CLIP directa (sin texto previo)
+        products: list[dict] = []
+        sources: list[str] = []
+
+        if clip_embedding:
+            products, sources = _visual_search_from_clip(clip_embedding, limit=3)
+
+        # Búsqueda por texto si CLIP no encontró nada o no hay contexto de texto
+        if not products and (context.get("part") or context.get("brand") or context.get("model")):
             products, sources = supabase_service.search_products(context)
 
-        # ── Re-rank visual de candidatos de texto ────────────────────────────────
-        if products and (clip_embedding or user_image_bytes):
-            telegram_service.send_message(chat_id, "📊 Verificando coincidencias visuales...")
-            if clip_embedding:
+            # CLIP rerank sobre los resultados de texto
+            if products and clip_embedding:
                 products, sources = _apply_clip_rerank(clip_embedding, products, sources)
-            else:
-                products, sources = _apply_visual_rerank(user_image_bytes, products, sources)
-
-        # ── Fallback visual directo: texto no encontró nada ──────────────────────
-        if not products and (clip_embedding or user_image_bytes):
-            telegram_service.send_message(
-                chat_id,
-                "📷 No encontré resultados por texto. Comparando con imágenes del catálogo...",
-            )
-            if clip_embedding:
-                products, sources = _visual_search_from_clip(clip_embedding)
-            else:
-                products, sources = _visual_search_from_bucket(user_image_bytes, context)
 
         if products:
             supabase_service.clear_session(chat_id)
@@ -256,97 +203,6 @@ def _run_search(
             chat_id,
             "⚠️ Ocurrió un error durante la búsqueda. Por favor intenta de nuevo.",
         )
-
-
-def _apply_visual_rerank(
-    user_image_bytes: bytes,
-    products: list[dict],
-    sources: list[str],
-) -> tuple[list[dict], list[str]]:
-    """
-    Descarga imágenes de los top-3 candidatos y pide a Claude que confirme
-    cuál coincide visualmente con la foto del usuario.
-    Reordena el resultado poniendo el match arriba.
-    """
-    candidates = []
-    for p in products[:3]:
-        image_url = p.get("image_url")
-        if image_url:
-            try:
-                cand_bytes = telegram_service.download_image_from_url(image_url)
-                candidates.append({"id": p["id"], "name": p["name_es"], "image_bytes": cand_bytes})
-            except Exception as e:
-                logger.warning(f"[photo_handler] Error descargando candidato visual: {e}")
-
-    if not candidates:
-        return products, sources
-
-    try:
-        comparison = claude_service.compare_parts(user_image_bytes, candidates)
-        if comparison.get("match_found"):
-            best_idx = comparison.get("best_match_index")
-            if best_idx and 1 <= best_idx <= len(candidates):
-                matched_id = candidates[best_idx - 1]["id"]
-                matched_prod = next((p for p in products if p["id"] == matched_id), None)
-                if matched_prod:
-                    products.remove(matched_prod)
-                    products.insert(0, matched_prod)
-                    matched_prod["_is_visual_match"] = True
-                    if "visual" not in sources:
-                        sources.append("visual")
-                    logger.info(f"[photo_handler] Re-rank visual: {matched_prod['name_es']}")
-    except Exception as e:
-        logger.error(f"[photo_handler] Error en validación visual: {e}")
-
-    return products, sources
-
-
-def _visual_search_from_bucket(
-    user_image_bytes: bytes,
-    context: dict,
-) -> tuple[list[dict], list[str]]:
-    """
-    Búsqueda visual directa contra el catálogo cuando el texto no encontró nada.
-    Obtiene hasta 20 productos con imagen (filtrados por marca si existe)
-    y pide a Claude que identifique cuál coincide con la foto del usuario.
-    """
-    brand = context.get("brand")
-    pool = supabase_service.get_products_with_images(brand=brand, limit=20)
-
-    if not pool:
-        logger.info("[photo_handler] Pool visual vacío")
-        return [], []
-
-    candidates = []
-    for p in pool:
-        image_url = p.get("image_url")
-        if image_url:
-            try:
-                img_bytes = telegram_service.download_image_from_url(image_url)
-                candidates.append({"id": p["id"], "name": p["name_es"], "image_bytes": img_bytes})
-            except Exception as e:
-                logger.warning(f"[photo_handler] No se pudo descargar imagen de pool: {e}")
-
-    if not candidates:
-        return [], []
-
-    logger.info(f"[photo_handler] Búsqueda visual directa con {len(candidates)} candidatos del bucket")
-
-    try:
-        comparison = claude_service.compare_parts(user_image_bytes, candidates)
-        if comparison.get("match_found"):
-            best_idx = comparison.get("best_match_index")
-            if best_idx and 1 <= best_idx <= len(candidates):
-                matched_id = candidates[best_idx - 1]["id"]
-                matched_prod = next((p for p in pool if p["id"] == matched_id), None)
-                if matched_prod:
-                    matched_prod["_is_visual_match"] = True
-                    logger.info(f"[photo_handler] Coincidencia visual directa: {matched_prod['name_es']}")
-                    return [matched_prod], ["visual"]
-    except Exception as e:
-        logger.error(f"[photo_handler] Error en búsqueda visual directa: {e}")
-
-    return [], []
 
 
 
