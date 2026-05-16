@@ -261,7 +261,11 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
             if r.data:
                 sources.append("fts")
                 for product in r.data:
-                    results_by_id[product["id"]] = product
+                    pid = product["id"]
+                    if pid not in results_by_id:
+                        results_by_id[pid] = product
+                    else:
+                        results_by_id[pid]["_double_match"] = True
         except Exception as e:
             print(f"[supabase] Error FTS v2: {e}")
 
@@ -332,7 +336,37 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
         reverse=True,
     )
 
-    return sorted_results[:5], list(set(sources))
+    top = _enrich_products(sorted_results[:5])
+    return top, list(set(sources))
+
+
+def _enrich_products(products: list[dict]) -> list[dict]:
+    """
+    Completa slug y price_public para productos que los traen vacíos.
+    Necesario porque los RPCs de Postgres no devuelven esos campos.
+    """
+    missing_ids = [
+        p["id"] for p in products
+        if not p.get("slug") or not p.get("price_public")
+    ]
+    if not missing_ids:
+        return products
+
+    try:
+        r = _supabase.table("products").select(
+            "id, slug, price_public"
+        ).in_("id", missing_ids).execute()
+        data_map = {row["id"]: row for row in (r.data or [])}
+        for product in products:
+            extra = data_map.get(product["id"], {})
+            if not product.get("slug"):
+                product["slug"] = extra.get("slug")
+            if not product.get("price_public"):
+                product["price_public"] = extra.get("price_public")
+    except Exception as e:
+        print(f"[supabase] Error enriqueciendo productos: {e}")
+
+    return products
 
 
 def search_manual_index(parsed: dict) -> list[dict]:
