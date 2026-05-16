@@ -1,8 +1,8 @@
 from typing import Optional
+from bot.config import WEBSITE_BASE_URL, SALES_CONTACT
 
 
 def format_price(price_centavos: int) -> str:
-    """Convierte centavos a Lempiras formateados."""
     return f"L. {price_centavos / 100:,.2f}"
 
 
@@ -18,25 +18,24 @@ def format_stock(quantity: int) -> str:
 def format_product(product: dict) -> str:
     """Formatea un producto individual como bloque HTML de Telegram."""
     name = product.get("name_es", "Repuesto")
+    sku = product.get("sku", "")
     part_number = product.get("part_number", "")
     price = product.get("price_public", 0)
     quantity = product.get("total_quantity") or product.get("stock_quantity", 0)
     brand = product.get("brand_name", "")
     location = product.get("location")
+    slug = product.get("slug")
 
-    lines = []
-    if product.get("_is_visual_match"):
-        sim = product.get("_clip_similarity")
-        sim_pct = f" ({sim * 100:.0f}% similitud)" if sim else ""
-        lines.append(f"✨ <b>¡COINCIDENCIA VISUAL{sim_pct}!</b>")
-    
-    lines.append(f"📦 <b>{name}</b>")
+    lines = [f"📦 <b>{name}</b>"]
 
     if brand:
         lines.append(f"🏷️ Marca: {brand}")
 
+    if sku:
+        lines.append(f"🔖 SKU: <code>{sku}</code>")
+
     if part_number:
-        lines.append(f"🔢 N° Parte: {part_number}")
+        lines.append(f"🔢 N° Parte: <code>{part_number}</code>")
 
     if price:
         lines.append(f"💰 Precio: <b>{format_price(price)}</b>")
@@ -46,43 +45,41 @@ def format_product(product: dict) -> str:
     if location:
         lines.append(f"📍 Ubicación: <code>{location}</code>")
 
+    if slug and WEBSITE_BASE_URL:
+        lines.append(f'🌐 <a href="{WEBSITE_BASE_URL}/products/{slug}">Ver en catálogo</a>')
+
     return "\n".join(lines)
 
 
 _SOURCE_LABELS: dict[str, str] = {
-    "code":   "🗄️ BD/código",
-    "fts":    "🗄️ BD/texto",
-    "ilike":  "🗄️ BD/aproximado",
-    "model":  "🗄️ BD/modelo",
-    "manual": "📄 Manuales PDF",
-    "gdrive": "📄 Manuales PDF (Drive)",
-    "web":    "🌐 Web fabricante",
-    "visual": "👁️ Verificación Visual",
-    "clip":   "🖼️ Búsqueda visual CLIP",
+    "code":          "🗄️ BD/código",
+    "word_match":    "🗄️ BD/palabras",
+    "brand_only":    "🗄️ BD/marca",
+    "brand_product": "🗄️ BD/marca+producto",
+    "fts":           "🗄️ BD/texto",
+    "ilike":         "🗄️ BD/aproximado",
+    "model":         "🗄️ BD/modelo",
+    "manual":        "📄 Manuales PDF",
+    "gdrive":        "📄 Manuales PDF (Drive)",
+    "web":           "🌐 Conocimiento técnico",
 }
 
 
 def format_quote_header(query_context: dict, sources: list[str] | None = None) -> str:
-    """Construye el encabezado de los resultados."""
     query_desc = _build_query_description(query_context)
     source_line = ""
     if sources:
         labels = " + ".join(_SOURCE_LABELS.get(s, s) for s in sources)
         source_line = f"\n<i>Fuente: {labels}</i>"
-    
     return f"🔩 <b>Resultados para: {query_desc}</b>{source_line}"
 
 
 def format_quote_footer() -> str:
-    """Construye el pie de mensaje."""
-    return (
-        "💬 Para confirmar disponibilidad o hacer tu pedido, "
-        "contacta a nuestro equipo de ventas."
-    )
+    return "💬 Para confirmar disponibilidad o hacer tu pedido, contacta a nuestro equipo de ventas."
 
 
 def format_quote_response(products: list[dict], query_context: dict, sources: list[str] | None = None) -> str:
-    """Fallback para cuando se envían sin foto (por compatibilidad)."""
+    """Fallback para envío sin foto (compatibilidad)."""
     if not products:
         return format_no_results(query_context)
 
@@ -96,140 +93,114 @@ def format_quote_response(products: list[dict], query_context: dict, sources: li
 
 def format_no_results(query_context: dict) -> str:
     query_desc = _build_query_description(query_context)
-    brand = query_context.get("brand")
-    model = query_context.get("model")
 
     msg = f"😔 No encontré resultados para: <b>{query_desc}</b>\n\n"
+    msg += "Intenta con:\n"
+    msg += "• Otro nombre o sinónimo del repuesto\n"
+    msg += "• El SKU o N° de parte exacto (ej: <code>WPW10006355</code>)\n"
+    msg += "• Solo la marca (ej: <i>Mabe</i> o <i>Whirlpool</i>)\n\n"
+    msg += "¿No lo encuentras? Escribe /ventas y un asesor te ayudará a localizarlo."
 
-    suggestions = []
-    if not brand:
-        suggestions.append("• Indica la <b>marca</b> del equipo (LG, Samsung, Mabe, GE, Whirlpool...)")
-    if not model:
-        suggestions.append("• Proporciona el <b>número de modelo</b> del electrodoméstico")
-    suggestions.append("• Puedes enviar una <b>foto del repuesto</b> o de la <b>etiqueta del equipo</b>")
-
-    if suggestions:
-        msg += "Intenta con más detalles:\n" + "\n".join(suggestions)
-
-    msg += "\n\n📞 También puedes contactarnos directamente para ayudarte."
     return msg
 
 
+def format_escalate_sales() -> str:
+    if SALES_CONTACT:
+        return (
+            "🛒 <b>Contactar a Ventas</b>\n\n"
+            "Un asesor de Tecni Express puede ayudarte a localizar el repuesto.\n\n"
+            f"📲 Contáctanos aquí: {SALES_CONTACT}"
+        )
+    return (
+        "🛒 <b>Contactar a Ventas</b>\n\n"
+        "Un asesor de Tecni Express puede ayudarte a localizar el repuesto.\n"
+        "Por favor espera — un asesor se pondrá en contacto contigo pronto."
+    )
+
+
 def format_needs_clarification(missing_fields: list[str], current_context: dict) -> str:
-    """Pide al usuario información que falta para completar la búsqueda."""
     if "brand" in missing_fields:
         return (
-            "🔍 ¿De qué <b>marca</b> es tu electrodoméstico?\n"
+            "🔍 ¿De qué <b>marca</b> es el equipo?\n"
             "LG · Samsung · Mabe · GE · Whirlpool · Frigidaire · Otra"
         )
     if "model" in missing_fields:
-        brand = current_context.get("brand", "tu equipo")
-        return (
-            f"🔍 ¿Cuál es el <b>número de modelo</b> de {brand}?\n"
-            "Puedes encontrarlo en la etiqueta del equipo o enviarnos una foto de ella."
-        )
+        brand = current_context.get("brand", "el equipo")
+        return f"🔍 ¿Cuál es el <b>número de modelo</b> de {brand}?"
     if "part" in missing_fields:
-        return "🔍 ¿Qué <b>repuesto</b> necesitas? Descríbelo o envía una foto del repuesto dañado."
+        return "🔍 ¿Qué <b>repuesto</b> necesitas? Escribe el nombre, descripción o SKU."
 
     return "🔍 Por favor proporciona más detalles sobre el repuesto que necesitas."
 
 
-def format_image_analysis_result(analysis: dict, image_type: str) -> str:
-    """Mensaje de confirmación después de analizar una imagen."""
-    if image_type == "label":
-        brand = analysis.get("brand", "desconocida")
-        model = analysis.get("model", "desconocido")
-        confidence = analysis.get("confidence", 0)
-
-        if confidence < 0.5:
-            return (
-                "⚠️ No pude leer claramente la etiqueta.\n"
-                "¿Podrías escribir la <b>marca</b> y <b>modelo</b> del equipo?"
-            )
-        return f"✅ Equipo identificado: <b>{brand} {model}</b>\n¿Qué repuesto necesitas?"
-
-    else:  # part photo
-        part = analysis.get("part_type", "repuesto desconocido")
-        confidence = analysis.get("confidence", 0)
-        needs_more = analysis.get("needs_more_info", False)
-
-        if confidence < 0.4 or needs_more:
-            missing = analysis.get("missing_info", "más información")
-            return f"🔍 Identificé un posible repuesto pero necesito {missing}. ¿Puedes añadir detalles?"
-
-        return f"🔍 Identificado: <b>{part}</b>\nBuscando en nuestro inventario..."
-
-
 def format_manual_result(manual_result: dict, _query_context: dict) -> str:
-    """Formato para resultados encontrados en manuales PDF."""
     brand = manual_result.get("brand", "")
     model = manual_result.get("model_prefix", "")
     excerpt = manual_result.get("excerpt", "")
     part_number = manual_result.get("part_number")
     part_name = manual_result.get("part_name")
 
-    header = f"📄 <b>Información encontrada en manual técnico</b>"
+    header = "📄 <b>Información encontrada en manual técnico</b>"
     if brand or model:
         header += f" ({(' '.join(filter(None, [brand, model]))).strip()})"
 
     lines = [
         header,
         f"<i>Fuente: 📄 Manuales PDF</i>\n",
-        f"✅ <b>¡Código encontrado!</b>",
+        "✅ <b>¡Código encontrado!</b>",
         f"🔢 N° Parte: <code>{part_number or 'No especificado'}</code>",
         f"📦 Repuesto: <b>{part_name or 'No especificado'}</b>",
         f"\n<i>Detalle: {excerpt[:300]}...</i>\n",
-        "⏳ <b>Próximamente se le enviará la cotización.</b>",
-        "📞 Para agilizar, puedes contactarnos directamente."
+        "📞 Contacta a nuestro equipo para confirmar disponibilidad y precio.",
     ]
 
     return "\n".join(lines)
 
 
 def format_manufacturer_web(web_text: str, query_context: dict) -> str:
-    """Formato para la respuesta de la capa 3 (conocimiento de Claude)."""
     query_desc = _build_query_description(query_context)
     return (
-        f"🤖 <b>Análisis de Repuesto: {query_desc}</b>\n\n"
+        f"🤖 <b>Referencia técnica: {query_desc}</b>\n\n"
         f"{web_text}\n\n"
-        "👨‍🔧 <i>No lo tengo en el inventario actual, pero **nuestros expertos de Tecni Express pueden conseguirlo bajo pedido**. "
-        "Contáctanos para confirmar disponibilidad y precio final.</i>"
+        "⚠️ <i>Este repuesto no está en el inventario actual. "
+        "Escribe /ventas y un asesor verificará disponibilidad bajo pedido.</i>"
     )
+
+
+def format_brief_welcome() -> str:
+    """Bienvenida breve para el primer mensaje de un usuario nuevo."""
+    return "👋 Bienvenido a <b>Tecni Express</b>. ¿Qué repuesto necesitas?"
 
 
 def format_welcome(user_name: Optional[str] = None) -> str:
     name_part = f", {user_name}" if user_name else ""
     return (
-        f"👋 ¡Hola{name_part}! Bienvenido a <b>Tecni Express</b>.\n\n"
-        "Somos especialistas en repuestos para lavadoras y secadoras.\n"
-        "Puedo ayudarte a cotizar el repuesto que necesitas.\n\n"
-        "<b>Puedes:</b>\n"
-        "• Escribir qué repuesto necesitas y el modelo del equipo\n"
-        "• Enviar una <b>foto del repuesto</b> dañado\n"
-        "• Enviar una <b>foto de la etiqueta</b> del equipo\n\n"
-        "¿Qué repuesto necesitas hoy?"
+        f"👋 Bienvenido{name_part} a <b>Tecni Express</b>.\n\n"
+        "Catálogo de repuestos para lavadoras, secadoras y estufas eléctricas.\n\n"
+        "<b>Busca por:</b>\n"
+        "• Nombre + marca: <code>Actuador Whirlpool</code>\n"
+        "• Descripción: <code>Banda secadora Mabe</code>\n"
+        "• Categoría: <code>Motor LG lavadora</code>\n"
+        "• SKU o N° parte: <code>WPW10006355</code>\n\n"
+        "Escribe /ventas si necesitas hablar con un asesor."
     )
 
 
 def format_help() -> str:
     return (
-        "ℹ️ <b>¿Cómo usar este bot?</b>\n\n"
-        "<b>Opción 1 — Descripción de texto:</b>\n"
-        "Escribe el repuesto, marca y modelo. Ejemplo:\n"
-        "<i>\"Necesito la correa de mi lavadora Samsung WA16W3\"</i>\n\n"
-        "<b>Opción 2 — Foto del repuesto:</b>\n"
-        "Envía una foto del repuesto dañado y lo identificamos.\n\n"
-        "<b>Opción 3 — Foto de la etiqueta:</b>\n"
-        "Envía una foto de la etiqueta del equipo con el texto "
-        "<i>\"etiqueta\"</i> como pie de foto, y dinos qué repuesto necesitas.\n\n"
-        "<b>Marcas que manejamos:</b>\n"
-        "LG · Samsung · Mabe · GE · Whirlpool · Frigidaire · y más\n\n"
-        "📞 Para pedidos y pagos, nuestro equipo te atenderá directamente."
+        "ℹ️ <b>Cómo buscar repuestos</b>\n\n"
+        "Envía el nombre, descripción o SKU del repuesto:\n\n"
+        "<code>Actuador Whirlpool</code>\n"
+        "<code>Banda secadora Mabe</code>\n"
+        "<code>Elemento calefactor LG estufa</code>\n"
+        "<code>WPW10006355</code>\n\n"
+        "<b>Marcas:</b> LG · Samsung · Mabe · GE · Whirlpool · Frigidaire · Acros\n"
+        "<b>Equipos:</b> Lavadoras · Secadoras · Estufas eléctricas\n\n"
+        "¿No encuentras el repuesto? Escribe /ventas para hablar con un asesor."
     )
 
 
 def _build_query_description(ctx: dict) -> str:
-    """Construye una descripción legible del query para el encabezado."""
     parts = []
     if ctx.get("part"):
         parts.append(ctx["part"].title())

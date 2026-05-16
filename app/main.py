@@ -1,6 +1,5 @@
 import hmac
 import logging
-from contextlib import asynccontextmanager
 
 # pyrefly: ignore [missing-import]
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Response
@@ -11,27 +10,14 @@ except ImportError:
     # pyrefly: ignore [missing-import]
     from starlette.responses import JSONResponse
 
-from bot.config import TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, APP_URL
+from bot.config import TELEGRAM_WEBHOOK_SECRET, APP_URL
 from bot.services import telegram_service
 
 print("🚀 Iniciando servidor FastAPI...")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Bot iniciando — pre-cargando modelo CLIP...")
-    try:
-        from bot.services import clip_service  # dispara carga del modelo al inicio
-        logger.info("Modelo CLIP listo.")
-    except Exception as e:
-        logger.warning(f"CLIP no disponible: {e}. Búsqueda visual usará Claude como fallback.")
-    yield
-    logger.info("Bot detenido.")
-
-
-app = FastAPI(title="Tecni Express Bot", lifespan=lifespan)
+app = FastAPI(title="Tecni Express Bot")
 
 
 @app.get("/")
@@ -213,9 +199,12 @@ def _handle_command(chat_id: int, text: str, user_name: str | None) -> None:
     if command == "/start":
         from bot.handlers.command_handler import handle_start
         handle_start(chat_id, user_name)
-    elif command == "/help" or command == "/ayuda":
+    elif command in ("/help", "/ayuda"):
         from bot.handlers.command_handler import handle_help
         handle_help(chat_id)
+    elif command in ("/ventas", "/asesor", "/contacto"):
+        from bot.handlers.command_handler import handle_ventas
+        handle_ventas(chat_id)
     else:
         telegram_service.send_message(
             chat_id,

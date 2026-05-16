@@ -42,3 +42,9 @@ MAX_RESULTS = 5
 SESSION_TTL_MINUTES = 30
 
 SUPPORTED_BRANDS = ["LG", "Samsung", "Mabe", "GE", "Whirlpool", "Frigidaire"]
+
+# URL base del sitio web (ej: https://www.tecniexpress.hn)
+WEBSITE_BASE_URL: str = os.getenv("WEBSITE_BASE_URL", "")
+
+# Contacto de ventas para escalación (ej: https://wa.me/50412345678)
+SALES_CONTACT: str = os.getenv("SALES_CONTACT", "")

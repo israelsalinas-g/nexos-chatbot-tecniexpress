@@ -40,6 +40,18 @@ def clear_session(chat_id: int) -> None:
     save_session(chat_id, "idle", {})
 
 
+def is_new_user(chat_id: int) -> bool:
+    """True si el chat nunca ha interactuado con el bot (sin registro en telegram_sessions)."""
+    result = (
+        _supabase.table("telegram_sessions")
+        .select("chat_id")
+        .eq("chat_id", chat_id)
+        .maybe_single()
+        .execute()
+    )
+    return result.data is None
+
+
 # ─────────────────────────────────────────────────────────────
 # Búsqueda de productos
 # ─────────────────────────────────────────────────────────────
@@ -101,7 +113,7 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
             q = _supabase.table("products").select(
                 "id, sku, part_number, name_es, description_es, location, "
                 "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-                "compatible_models, tags"
+                "compatible_models, tags, slug"
             ).eq("is_active", True)
             
             # Condiciones OR para cada campo
@@ -170,7 +182,7 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
                     q = _supabase.table("products").select(
                         "id, sku, part_number, name_es, description_es, location, "
                         "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-                        "compatible_models, tags"
+                        "compatible_models, tags, slug"
                     ).eq("brand_id", brand_id).eq("is_active", True).limit(10).execute()
                     
                     if q.data:
@@ -197,7 +209,7 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
             q = _supabase.table("products").select(
                 "id, sku, part_number, name_es, description_es, location, "
                 "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-                "compatible_models, tags"
+                "compatible_models, tags, slug"
             ).eq("is_active", True)
             
             # Buscar productos que contengan tanto el tipo como la marca
@@ -284,7 +296,7 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
             q = _supabase.table("products").select(
                 "id, sku, part_number, name_es, description_es, location, "
                 "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-                "compatible_models, tags"
+                "compatible_models, tags, slug"
             ).eq("is_active", True)
             or_conditions = []
             for w in words:
@@ -377,7 +389,7 @@ def get_products_with_images(brand: str | None = None, limit: int = 20) -> list[
         q = _supabase.table("products").select(
             "id, sku, part_number, name_es, description_es, location, "
             "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-            "compatible_models, tags"
+            "compatible_models, tags, slug"
         ).eq("is_active", True).in_("id", product_ids_with_images)
         
         if brand:

@@ -4,13 +4,17 @@ from bot.services import claude_service, supabase_service, telegram_service, pdf
 logger = logging.getLogger(__name__)
 
 from bot.utils.formatters import (
-    format_quote_response,
     format_no_results,
     format_manufacturer_web,
+    format_brief_welcome,
 )
 
 
 def handle_text(chat_id: int, text: str) -> None:
+    # Bienvenida única para la primera interacción del usuario
+    if supabase_service.is_new_user(chat_id):
+        telegram_service.send_message(chat_id, format_brief_welcome())
+
     session = supabase_service.get_session(chat_id)
     state = session["state"]
     context = session["context"]
