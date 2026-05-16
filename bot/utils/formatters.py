@@ -18,7 +18,6 @@ def format_stock(quantity: int) -> str:
 def format_product(product: dict) -> str:
     """Formatea un producto individual como bloque HTML de Telegram."""
     name = product.get("name_es", "Repuesto")
-    sku = product.get("sku", "")
     part_number = product.get("part_number", "")
     price = product.get("price_public", 0)
     quantity = product.get("total_quantity") or product.get("stock_quantity", 0)
@@ -30,9 +29,6 @@ def format_product(product: dict) -> str:
 
     if brand:
         lines.append(f"🏷️ Marca: {brand}")
-
-    if sku:
-        lines.append(f"🔖 SKU: <code>{sku}</code>")
 
     if part_number:
         lines.append(f"🔢 N° Parte: <code>{part_number}</code>")
@@ -46,7 +42,7 @@ def format_product(product: dict) -> str:
         lines.append(f"📍 Ubicación: <code>{location}</code>")
 
     if slug and WEBSITE_BASE_URL:
-        lines.append(f'🌐 <a href="{WEBSITE_BASE_URL}/products/{slug}">Ver en catálogo</a>')
+        lines.append(f'🛒 <a href="{WEBSITE_BASE_URL}/products/{slug}">Solicitar este producto</a>')
 
     return "\n".join(lines)
 
@@ -169,20 +165,16 @@ def format_manufacturer_web(web_text: str, query_context: dict) -> str:
 
 def format_brief_welcome() -> str:
     """Bienvenida breve para el primer mensaje de un usuario nuevo."""
-    return "👋 Bienvenido a <b>Tecni Express</b>. ¿Qué repuesto necesitas?"
+    return "👋 <b>Tecni Express</b> — ¿Qué repuesto necesitas?"
 
 
 def format_welcome(user_name: Optional[str] = None) -> str:
     name_part = f", {user_name}" if user_name else ""
     return (
-        f"👋 Bienvenido{name_part} a <b>Tecni Express</b>.\n\n"
-        "Catálogo de repuestos para lavadoras, secadoras y estufas eléctricas.\n\n"
-        "<b>Busca por:</b>\n"
-        "• Nombre + marca: <code>Actuador Whirlpool</code>\n"
-        "• Descripción: <code>Banda secadora Mabe</code>\n"
-        "• Categoría: <code>Motor LG lavadora</code>\n"
-        "• SKU o N° parte: <code>WPW10006355</code>\n\n"
-        "Escribe /ventas si necesitas hablar con un asesor."
+        f"👋 Bienvenido{name_part} a <b>Tecni Express</b>.\n"
+        "Repuestos para lavadoras, secadoras y estufas eléctricas.\n\n"
+        "<code>Actuador Whirlpool</code> · <code>Banda Mabe</code> · <code>WPW10006355</code>\n\n"
+        "/help · /ventas"
     )
 
 
