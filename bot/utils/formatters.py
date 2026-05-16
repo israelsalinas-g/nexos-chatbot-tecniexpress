@@ -34,7 +34,7 @@ def format_product(product: dict) -> str:
         lines.append(f"🔢 N° Parte: <code>{part_number}</code>")
 
     if price:
-        lines.append(f"💰 Precio: <b>{format_price(price)}</b>")
+        lines.append(f"💰 Precio al público: <b>{format_price(price)}</b>")
 
     lines.append(format_stock(int(quantity or 0)))
 
