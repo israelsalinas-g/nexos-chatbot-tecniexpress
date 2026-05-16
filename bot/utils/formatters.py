@@ -1,5 +1,15 @@
+import os
 from typing import Optional
-from bot.config import WEBSITE_BASE_URL, SALES_CONTACT
+
+_WEBSITE_BASE_URL_DEFAULT = "https://nexos-tecni-express.vercel.app/es"
+
+
+def _website_base_url() -> str:
+    return os.getenv("WEBSITE_BASE_URL", _WEBSITE_BASE_URL_DEFAULT)
+
+
+def _sales_contact() -> str:
+    return os.getenv("SALES_CONTACT", "")
 
 
 def format_price(price_centavos: int) -> str:
@@ -41,8 +51,9 @@ def format_product(product: dict) -> str:
     if location:
         lines.append(f"📍 Ubicación: <code>{location}</code>")
 
-    if slug and WEBSITE_BASE_URL:
-        lines.append(f'🛒 <a href="{WEBSITE_BASE_URL}/products/{slug}">Solicitar este producto</a>')
+    base_url = _website_base_url()
+    if slug and base_url:
+        lines.append(f'🛒 <a href="{base_url}/products/{slug}">Solicitar este producto</a>')
 
     return "\n".join(lines)
 
@@ -101,11 +112,12 @@ def format_no_results(query_context: dict) -> str:
 
 
 def format_escalate_sales() -> str:
-    if SALES_CONTACT:
+    contact = _sales_contact()
+    if contact:
         return (
             "🛒 <b>Contactar a Ventas</b>\n\n"
             "Un asesor de Tecni Express puede ayudarte a localizar el repuesto.\n\n"
-            f"📲 Contáctanos aquí: {SALES_CONTACT}"
+            f"📲 Contáctanos aquí: {contact}"
         )
     return (
         "🛒 <b>Contactar a Ventas</b>\n\n"

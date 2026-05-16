@@ -342,27 +342,25 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
 
 def _enrich_products(products: list[dict]) -> list[dict]:
     """
-    Completa slug y price_public para productos que los traen vacíos.
+    Completa slug y price_public para todos los productos.
     Necesario porque los RPCs de Postgres no devuelven esos campos.
     """
-    missing_ids = [
-        p["id"] for p in products
-        if not p.get("slug") or not p.get("price_public")
-    ]
-    if not missing_ids:
+    all_ids = [p["id"] for p in products if p.get("id")]
+    if not all_ids:
         return products
 
     try:
         r = _supabase.table("products").select(
             "id, slug, price_public"
-        ).in_("id", missing_ids).execute()
+        ).in_("id", all_ids).execute()
         data_map = {row["id"]: row for row in (r.data or [])}
         for product in products:
             extra = data_map.get(product["id"], {})
-            if not product.get("slug"):
-                product["slug"] = extra.get("slug")
-            if not product.get("price_public"):
-                product["price_public"] = extra.get("price_public")
+            if extra.get("slug"):
+                product["slug"] = extra["slug"]
+            if extra.get("price_public"):
+                product["price_public"] = extra["price_public"]
+        print(f"[enrich] {len(products)} productos — slugs: {[p.get('slug') for p in products]}")
     except Exception as e:
         print(f"[supabase] Error enriqueciendo productos: {e}")
 
