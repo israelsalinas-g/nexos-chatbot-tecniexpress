@@ -57,6 +57,7 @@ def format_product(product: dict) -> str:
 _SOURCE_LABELS: dict[str, str] = {
     "code":          "🗄️ BD/código",
     "word_match":    "🗄️ BD/palabras",
+    "similar":       "🗄️ BD/similares",
     "brand_only":    "🗄️ BD/marca",
     "brand_product": "🗄️ BD/marca+producto",
     "fts":           "🗄️ BD/texto",
@@ -79,6 +80,14 @@ def format_quote_header(query_context: dict, sources: list[str] | None = None) -
 
 def format_quote_footer() -> str:
     return "💬 Para confirmar disponibilidad o hacer tu pedido, contacta a nuestro equipo de ventas."
+
+
+def format_similar_footer() -> str:
+    return (
+        "⚠️ <i>No se encontraron productos que coincidan exactamente con tu búsqueda.\n"
+        "Los resultados mostrados son similares — por favor contacta a nuestro equipo de ventas "
+        "para verificar disponibilidad del producto exacto.</i>"
+    )
 
 
 def format_quote_response(products: list[dict], query_context: dict, sources: list[str] | None = None) -> str:

@@ -7,6 +7,7 @@ from bot.utils.formatters import (
     format_no_results,
     format_manufacturer_web,
     format_brief_welcome,
+    format_similar_footer,
 )
 
 
@@ -82,32 +83,27 @@ def handle_text(chat_id: int, text: str) -> None:
 
 def _run_search(chat_id: int, context: dict) -> None:
     """Busca en BD → PDFs → muestra resultados o sugerencias."""
-    products, sources = supabase_service.search_products(context)
+    products, sources, is_exact = supabase_service.search_products(context)
 
     if products:
         supabase_service.clear_session(chat_id)
-        
-        # Enviar encabezado
+
         from bot.utils import formatters
         header = formatters.format_quote_header(context, sources)
         telegram_service.send_message(chat_id, header)
-        
-        # Enviar cada producto individualmente (con foto si existe)
+
         for p in products[:5]:
             caption = formatters.format_product(p)
             image_url = p.get("image_url")
-            
             if image_url:
                 try:
                     telegram_service.send_photo(chat_id, image_url, caption)
                 except Exception:
-                    # Si la URL de la imagen falla o es inválida, enviar como texto normal
                     telegram_service.send_message(chat_id, caption)
             else:
                 telegram_service.send_message(chat_id, caption)
-                
-        # Enviar pie de mensaje
-        footer = formatters.format_quote_footer()
+
+        footer = format_similar_footer() if not is_exact else formatters.format_quote_footer()
         telegram_service.send_message(chat_id, footer)
         return
 
