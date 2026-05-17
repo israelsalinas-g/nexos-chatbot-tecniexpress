@@ -73,7 +73,10 @@ def handle_text(chat_id: int, text: str) -> None:
     if not context.get("part") and not context.get("search_terms"):
         context["part"] = text.strip()
         context["search_terms"] = [text.strip()]
-    
+
+    # Guardar las palabras exactas del usuario para la búsqueda AND directa
+    context["raw_text"] = text.strip()
+
     # Debug log (opcional, ayuda a ver qué está buscando el bot)
     logger.info(f"[text_handler] Buscando: {context}")
 

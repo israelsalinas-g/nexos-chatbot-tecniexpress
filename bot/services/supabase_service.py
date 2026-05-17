@@ -120,6 +120,10 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str], bool]:
     all_terms_str = " ".join(all_terms)
     words = [w.strip() for w in all_terms_str.split() if len(w.strip()) >= 3]
 
+    # Palabras literales que el usuario escribió (sin sinónimos de Claude)
+    raw_text = parsed.get("raw_text") or ""
+    raw_words = [w.strip() for w in raw_text.split() if len(w.strip()) >= 3]
+
     # Resolver marca una sola vez
     brand_id = None
     brand_name_resolved = brand
@@ -135,16 +139,19 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str], bool]:
             print(f"[supabase] Error resolviendo marca '{brand}': {e}")
 
     # ============================================================
-    # ETAPA 1: AND en name_es — todas las palabras deben estar presentes
+    # ETAPA 1: AND en name_es — todas las palabras del usuario deben estar presentes
+    # Usa raw_words (texto literal del usuario) para evitar que sinónimos en inglés
+    # generados por Claude rompan el AND. Fallback a words si no hay raw_words.
     # ============================================================
-    if words and not results_by_id:
+    and_words = raw_words[:5] if raw_words else words[:5]
+    if and_words and not results_by_id:
         try:
             q = _supabase.table("products").select(
                 "id, sku, part_number, name_es, description_es, location, "
                 "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
                 "compatible_models, tags, slug"
             ).eq("is_active", True)
-            for word in words[:5]:
+            for word in and_words:
                 q = q.ilike("name_es", f"%{word}%")
             if brand_id:
                 q = q.eq("brand_id", brand_id)
