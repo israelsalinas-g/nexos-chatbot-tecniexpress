@@ -92,10 +92,13 @@ def _attach_extras(prod: dict, brand_name: str | None) -> None:
 
 def search_products(parsed: dict) -> tuple[list[dict], list[str], bool]:
     """
-    Búsqueda en dos etapas principales sobre name_es:
-    1. AND — el producto debe contener TODAS las palabras → is_exact=True
-    2. OR  — cualquier palabra coincide → is_exact=False (resultados similares)
-    Etapas adicionales (marca, FTS, modelo) como fallback si ambas fallan.
+    Búsqueda sobre name_es usando las palabras exactas del cliente:
+    1. AND — todas las palabras deben estar en name_es → is_exact=True
+    2. OR  — al menos una palabra coincide → is_exact=False (resultados similares)
+    3. FTS — fallback de texto completo si AND y OR no devuelven nada
+
+    name_es ya contiene marca y modelo (ej: "Banda de secadora Whirlpool"),
+    por lo que no se necesita filtrar por brand_id por separado.
 
     Retorna (productos max 5, fuentes, is_exact).
     """
@@ -103,108 +106,46 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str], bool]:
     sources: list[str] = []
     is_exact = True
 
-    search_terms = parsed.get("search_terms") or []
-    part = parsed.get("part") or ""
-    brand = parsed.get("brand")
-    model = parsed.get("model")
     code = parsed.get("code") or ""
+    raw_text = parsed.get("raw_text") or parsed.get("part") or ""
+    words = [w.strip() for w in raw_text.split() if len(w.strip()) >= 2]
 
-    # Búsqueda directa por código
+    # Búsqueda directa por código/SKU
     if code:
         code_results, code_sources = search_by_code(code)
         for product in code_results:
             results_by_id[product["id"]] = product
         sources.extend(code_sources)
 
-    all_terms = list(set(filter(None, [part] + search_terms)))
-    all_terms_str = " ".join(all_terms)
-    words = [w.strip() for w in all_terms_str.split() if len(w.strip()) >= 3]
-
-    # Palabras literales que el usuario escribió (sin sinónimos de Claude)
-    raw_text = parsed.get("raw_text") or ""
-    raw_words = [w.strip() for w in raw_text.split() if len(w.strip()) >= 3]
-
-    # Resolver marca una sola vez
-    brand_id = None
-    brand_name_resolved = brand
-    if brand:
-        try:
-            brand_res = _supabase.table("brands").select("id, name").ilike(
-                "name", f"%{brand}%"
-            ).limit(1).execute()
-            if brand_res.data:
-                brand_id = brand_res.data[0]["id"]
-                brand_name_resolved = brand_res.data[0]["name"]
-        except Exception as e:
-            print(f"[supabase] Error resolviendo marca '{brand}': {e}")
-
     # ============================================================
-    # ETAPA 1: AND en name_es — todas las palabras del usuario deben estar presentes
-    # Usa raw_words (texto literal del usuario) para evitar que sinónimos en inglés
-    # generados por Claude rompan el AND. Fallback a words si no hay raw_words.
+    # ETAPA 1: AND en name_es — todas las palabras deben estar presentes
     # ============================================================
-    and_words = raw_words[:5] if raw_words else words[:5]
-    if and_words and not results_by_id:
+    if words and not results_by_id:
         try:
             q = _supabase.table("products").select(
                 "id, sku, part_number, name_es, description_es, location, "
                 "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
                 "compatible_models, tags, slug"
             ).eq("is_active", True)
-            for word in and_words:
+            for word in words[:6]:
                 q = q.ilike("name_es", f"%{word}%")
-            if brand_id:
-                q = q.eq("brand_id", brand_id)
             r = q.limit(10).execute()
             if r.data:
                 sources.append("word_match")
                 for prod in r.data:
-                    _attach_extras(prod, brand_name_resolved)
+                    _attach_extras(prod, None)
                     results_by_id[prod["id"]] = prod
         except Exception as e:
             print(f"[supabase] Error AND search: {e}")
 
     # ============================================================
-    # ETAPA 1.5: Solo por marca (cuando el usuario solo escribe una marca)
-    # ============================================================
-    if brand and not part and not model and not code and brand_id:
-        possible_brands = ["LG", "Samsung", "Mabe", "GE", "Whirlpool", "Frigidaire"]
-        brand_normalized = brand.strip().upper()
-        matched_brand = next(
-            (b for b in possible_brands
-             if b.lower() in brand_normalized.lower() or brand_normalized.lower() in b.lower()),
-            None,
-        )
-        if matched_brand:
-            try:
-                q = (
-                    _supabase.table("products")
-                    .select(
-                        "id, sku, part_number, name_es, description_es, location, "
-                        "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-                        "compatible_models, tags, slug"
-                    )
-                    .eq("brand_id", brand_id)
-                    .eq("is_active", True)
-                    .limit(10)
-                    .execute()
-                )
-                if q.data:
-                    sources.append("brand_only")
-                    for prod in q.data:
-                        _attach_extras(prod, brand_name_resolved)
-                        results_by_id[prod["id"]] = prod
-            except Exception as e:
-                print(f"[supabase] Error brand-only search: {e}")
-
-    # ============================================================
-    # ETAPA 2: OR en name_es — resultados similares (alguna palabra coincide)
+    # ETAPA 2: OR en name_es — al menos una palabra coincide
     # ============================================================
     if not results_by_id and words:
         is_exact = False
         try:
-            or_conditions = [f"name_es.ilike.%{w}%" for w in words[:5]]
-            q = (
+            or_conditions = [f"name_es.ilike.%{w}%" for w in words[:6]]
+            r = (
                 _supabase.table("products")
                 .select(
                     "id, sku, part_number, name_es, description_es, location, "
@@ -213,29 +154,27 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str], bool]:
                 )
                 .eq("is_active", True)
                 .or_(",".join(or_conditions))
+                .limit(10)
+                .execute()
             )
-            if brand_id:
-                q = q.eq("brand_id", brand_id)
-            r = q.limit(10).execute()
             if r.data:
                 sources.append("similar")
                 for prod in r.data:
-                    _attach_extras(prod, brand_name_resolved)
+                    _attach_extras(prod, None)
                     results_by_id[prod["id"]] = prod
         except Exception as e:
             print(f"[supabase] Error OR search: {e}")
 
     # ============================================================
-    # ETAPA 3: FTS — fallback si AND y OR no encontraron nada
+    # ETAPA 3: FTS — fallback de texto completo
     # ============================================================
-    if not results_by_id and all_terms_str.strip():
+    if not results_by_id and raw_text.strip():
         is_exact = False
-        fts_query = part.strip() if part else all_terms_str.strip()
         try:
             r = _supabase.rpc("search_products_v2", {
-                "p_query": fts_query,
-                "p_brand_name": brand,
-                "p_model": model,
+                "p_query": raw_text.strip(),
+                "p_brand_name": None,
+                "p_model": None,
                 "p_limit": 8,
             }).execute()
             if r.data:
@@ -248,28 +187,6 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str], bool]:
                         results_by_id[pid]["_double_match"] = True
         except Exception as e:
             print(f"[supabase] Error FTS v2: {e}")
-
-    # ============================================================
-    # ETAPA 4: Compatibilidad por modelo
-    # ============================================================
-    if model:
-        try:
-            r = _supabase.rpc("search_products_by_model", {
-                "p_model": model,
-                "p_brand": brand,
-                "p_part_filter": part or None,
-                "p_limit": 10,
-            }).execute()
-            if r.data:
-                sources.append("model")
-                for product in r.data:
-                    pid = product["id"]
-                    if pid not in results_by_id:
-                        results_by_id[pid] = product
-                    else:
-                        results_by_id[pid]["_double_match"] = True
-        except Exception as e:
-            print(f"[supabase] Error compatibility: {e}")
 
     sorted_results = sorted(
         results_by_id.values(),

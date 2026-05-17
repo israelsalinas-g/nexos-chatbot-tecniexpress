@@ -1,4 +1,5 @@
 import logging
+import re
 from bot.services import claude_service, supabase_service, telegram_service, pdf_service
 
 logger = logging.getLogger(__name__)
@@ -10,9 +11,14 @@ from bot.utils.formatters import (
     format_similar_footer,
 )
 
+# Códigos alfanuméricos que no son SKUs de parte
+_SKU_STOP = {
+    'SKU', 'REF', 'PARTE', 'PRODUCTO', 'LAVADORA', 'SECADORA', 'ESTUFA',
+    'MABE', 'SAMSUNG', 'WHIRLPOOL', 'FRIGIDAIRE', 'LG', 'GE', 'ACROS',
+}
+
 
 def handle_text(chat_id: int, text: str) -> None:
-    # Bienvenida única para la primera interacción del usuario
     if supabase_service.is_new_user(chat_id):
         telegram_service.send_message(chat_id, format_brief_welcome())
 
@@ -22,10 +28,9 @@ def handle_text(chat_id: int, text: str) -> None:
 
     telegram_service.send_typing(chat_id)
 
-    # Respuestas a solicitudes de aclaración anteriores
     if state == "awaiting_brand":
         context["brand"] = text.strip()
-        context.setdefault("search_terms", [text.strip()])
+        context.setdefault("search_terms", text.split())
         _run_search(chat_id, context)
         return
 
@@ -36,51 +41,27 @@ def handle_text(chat_id: int, text: str) -> None:
 
     if state == "awaiting_part":
         context["part"] = text.strip()
-        context["search_terms"] = [text.strip()]
+        context["search_terms"] = text.split()
         _run_search(chat_id, context)
         return
 
-    # Consulta nueva: parsear con Claude para extraer brand/model/part
-    import re
-    # Patrón simple para SKUs: Alfanuméricos de 6+ caracteres o con guiones
+    # Detectar SKU/código de parte (alfanumérico con dígitos)
     potential_codes = re.findall(r'\b[A-Z0-9]{2,10}(?:-[A-Z0-9]{2,10})*\b', text.upper())
-    # Filtrar términos comunes que no son SKUs (ej: SKU, REF, PARTE, PRODUCTO)
-    STOP_CODES = {'SKU', 'REF', 'PARTE', 'PRODUCTO', 'LAVADORA', 'MABE', 'SAMSUNG', 'WHIRLPOOL', 'LG'}
-    skus = [c for c in potential_codes if c not in STOP_CODES and any(char.isdigit() for char in c)]
-
-    try:
-        parsed = claude_service.parse_text_query(text)
-    except Exception as e:
-        logger.error(f"[text_handler] Falló Claude, usando texto directo: {e}")
-        parsed = {"part": text.strip(), "search_terms": [text.strip()], "confidence": 0.5}
+    skus = [c for c in potential_codes if c not in _SKU_STOP and any(ch.isdigit() for ch in c)]
 
     if skus:
-        parsed["code"] = skus[0]
-        parsed["part"] = skus[0]
-        parsed["search_terms"] = [skus[0]]
-
-    # Combinar con contexto de sesión previa
-    # Si Claude identificó un repuesto nuevo, reemplazamos el anterior para no mezclar "actuador" con "teclado"
-    if parsed.get("part") or parsed.get("search_terms"):
-        context["part"] = parsed.get("part")
-        context["search_terms"] = parsed.get("search_terms")
-
-    for field in ("brand", "model", "appliance_type"):
-        if parsed.get(field):
-            context[field] = parsed[field]
-
-    # Si después de todo no hay un repuesto claro en el contexto, usamos el texto del usuario
-    if not context.get("part") and not context.get("search_terms"):
+        # Búsqueda por código exacto
+        context["code"] = skus[0]
+        context["part"] = skus[0]
+        context["search_terms"] = [skus[0]]
+    else:
+        # Búsqueda por palabras: se usan exactamente como las escribió el cliente
+        # name_es ya incluye marca y modelo (ej: "Banda de secadora Whirlpool")
         context["part"] = text.strip()
-        context["search_terms"] = [text.strip()]
+        context["search_terms"] = [w for w in text.split() if len(w) >= 2]
 
-    # Guardar las palabras exactas del usuario para la búsqueda AND directa
     context["raw_text"] = text.strip()
-
-    # Debug log (opcional, ayuda a ver qué está buscando el bot)
     logger.info(f"[text_handler] Buscando: {context}")
-
-    # Siempre buscar primero — nunca pedir información antes de intentar
     _run_search(chat_id, context)
 
 
