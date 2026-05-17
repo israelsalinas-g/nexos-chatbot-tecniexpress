@@ -32,7 +32,6 @@ def format_product(product: dict) -> str:
     price = product.get("price_public", 0)
     quantity = product.get("total_quantity") or product.get("stock_quantity", 0)
     brand = product.get("brand_name", "")
-    location = product.get("location")
     slug = product.get("slug")
 
     lines = [f"📦 <b>{name}</b>"]
@@ -47,9 +46,6 @@ def format_product(product: dict) -> str:
         lines.append(f"💰 Precio al público: <b>{format_price(price)}</b>")
 
     lines.append(format_stock(int(quantity or 0)))
-
-    if location:
-        lines.append(f"📍 Ubicación: <code>{location}</code>")
 
     base_url = _website_base_url()
     if slug and base_url:
