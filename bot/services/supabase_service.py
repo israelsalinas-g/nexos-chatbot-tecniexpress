@@ -101,60 +101,87 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
     all_terms = list(set(filter(None, [part] + search_terms)))
     all_terms_str = " ".join(all_terms)
 
+    # Resolver marca una sola vez para reutilizar en todas las etapas
+    brand_id = None
+    brand_name_resolved = brand
+    if brand:
+        try:
+            brand_res = _supabase.table("brands").select("id, name").ilike(
+                "name", f"%{brand}%"
+            ).limit(1).execute()
+            if brand_res.data:
+                brand_id = brand_res.data[0]["id"]
+                brand_name_resolved = brand_res.data[0]["name"]
+        except Exception as e:
+            print(f"[supabase] Error resolviendo marca '{brand}': {e}")
+
     # ============================================================
-    # NUEVA ETAPA 1: Búsqueda por palabras individuales
-    # Busca cada palabra por separado para encontrar productos similares
+    # ETAPA 1: Intersección de palabras (AND entre todas)
+    # El producto debe contener TODAS las palabras del query
     # ============================================================
     individual_words = [w.strip() for w in all_terms_str.split() if len(w.strip()) >= 3]
-    
-    for word in individual_words[:5]:  # Máximo 5 palabras
-        try:
-            # Buscar en múltiples campos vía ILIKE
-            q = _supabase.table("products").select(
-                "id, sku, part_number, name_es, description_es, location, "
-                "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-                "compatible_models, tags, slug"
-            ).eq("is_active", True)
-            
-            # Condiciones OR para cada campo
-            or_conditions = [
-                f"name_es.ilike.%{word}%",
-                f"sku.ilike.%{word}%",
-                f"part_number.ilike.%{word}%",
-                f"description_es.ilike.%{word}%"
-            ]
-            q = q.or_(",".join(or_conditions))
-            
-            # Filtrar por marca si se especificó
-            if brand:
-                brand_res = _supabase.table("brands").select("id").ilike(
-                    "name", f"%{brand}%"
-                ).limit(1).execute()
-                if brand_res.data:
-                    q = q.eq("brand_id", brand_res.data[0]["id"])
 
-            r = q.limit(10).execute()
-            if r.data:
-                sources.append("word_match")
-                for prod in r.data:
-                    # Obtener el nombre de la marca para cada producto
-                    if prod.get("brand_id"):
-                        brand_row = _supabase.table("brands").select("name").eq(
-                            "id", prod["brand_id"]
-                        ).maybe_single().execute()
-                        if brand_row.data:
-                            prod["brand_name"] = brand_row.data["name"]
-                    
-                    # Obtener imagen primary
-                    img_row = _supabase.table("product_images").select("url").eq(
-                        "product_id", prod["id"]
-                    ).eq("is_primary", True).maybe_single().execute()
-                    if img_row.data:
-                        prod["image_url"] = img_row.data["url"]
-                    
-                    results_by_id[prod["id"]] = prod
-        except Exception as e:
-            print(f"[supabase] Error word search '{word}': {e}")
+    if individual_words:
+        word_id_sets: list[set] = []
+        for word in individual_words[:5]:
+            try:
+                or_conditions = [
+                    f"name_es.ilike.%{word}%",
+                    f"sku.ilike.%{word}%",
+                    f"part_number.ilike.%{word}%",
+                    f"description_es.ilike.%{word}%",
+                ]
+                q = (
+                    _supabase.table("products")
+                    .select("id")
+                    .eq("is_active", True)
+                    .or_(",".join(or_conditions))
+                )
+                if brand_id:
+                    q = q.eq("brand_id", brand_id)
+                r = q.execute()
+                word_id_sets.append({row["id"] for row in r.data} if r.data else set())
+            except Exception as e:
+                print(f"[supabase] Error word search '{word}': {e}")
+                word_id_sets.append(set())
+
+        # Intersectar: solo IDs presentes en TODAS las palabras buscadas
+        matching_ids: set = word_id_sets[0]
+        for s in word_id_sets[1:]:
+            matching_ids &= s
+
+        if matching_ids:
+            try:
+                r = (
+                    _supabase.table("products")
+                    .select(
+                        "id, sku, part_number, name_es, description_es, location, "
+                        "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
+                        "compatible_models, tags, slug"
+                    )
+                    .eq("is_active", True)
+                    .in_("id", list(matching_ids))
+                    .limit(10)
+                    .execute()
+                )
+                if r.data:
+                    sources.append("word_match")
+                    for prod in r.data:
+                        if brand_name_resolved:
+                            prod["brand_name"] = brand_name_resolved
+                        img_row = (
+                            _supabase.table("product_images")
+                            .select("url")
+                            .eq("product_id", prod["id"])
+                            .eq("is_primary", True)
+                            .maybe_single()
+                            .execute()
+                        )
+                        if img_row.data:
+                            prod["image_url"] = img_row.data["url"]
+                        results_by_id[prod["id"]] = prod
+            except Exception as e:
+                print(f"[supabase] Error fetching intersected products: {e}")
 
     # ============================================================
     # NUEVA ETAPA 1.5: Búsqueda SOLO por marca
@@ -171,31 +198,35 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
                 matched_brand = b
                 break
         
-        if matched_brand:
+        if matched_brand and brand_id:
             try:
-                brand_res = _supabase.table("brands").select("id").ilike(
-                    "name", f"%{matched_brand}%"
-                ).limit(1).execute()
-                
-                if brand_res.data:
-                    brand_id = brand_res.data[0]["id"]
-                    q = _supabase.table("products").select(
+                q = (
+                    _supabase.table("products")
+                    .select(
                         "id, sku, part_number, name_es, description_es, location, "
                         "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
                         "compatible_models, tags, slug"
-                    ).eq("brand_id", brand_id).eq("is_active", True).limit(10).execute()
-                    
-                    if q.data:
-                        sources.append("brand_only")
-                        for prod in q.data:
-                            prod["brand_name"] = matched_brand
-                            # Obtener imagen
-                            img_row = _supabase.table("product_images").select("url").eq(
-                                "product_id", prod["id"]
-                            ).eq("is_primary", True).maybe_single().execute()
-                            if img_row.data:
-                                prod["image_url"] = img_row.data["url"]
-                            results_by_id[prod["id"]] = prod
+                    )
+                    .eq("brand_id", brand_id)
+                    .eq("is_active", True)
+                    .limit(10)
+                    .execute()
+                )
+                if q.data:
+                    sources.append("brand_only")
+                    for prod in q.data:
+                        prod["brand_name"] = brand_name_resolved
+                        img_row = (
+                            _supabase.table("product_images")
+                            .select("url")
+                            .eq("product_id", prod["id"])
+                            .eq("is_primary", True)
+                            .maybe_single()
+                            .execute()
+                        )
+                        if img_row.data:
+                            prod["image_url"] = img_row.data["url"]
+                        results_by_id[prod["id"]] = prod
             except Exception as e:
                 print(f"[supabase] Error brand-only search: {e}")
 
@@ -203,42 +234,35 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
     # NUEVA ETAPA 2: Búsqueda combinada marca + tipo de producto
     # Ejemplo: "actuador Whirlpool" o "Banda LG"
     # ============================================================
-    if brand and part:
-        combined_query = f"{part} {brand}".strip()
+    if brand and part and brand_id:
         try:
-            q = _supabase.table("products").select(
-                "id, sku, part_number, name_es, description_es, location, "
-                "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-                "compatible_models, tags, slug"
-            ).eq("is_active", True)
-            
-            # Buscar productos que contengan tanto el tipo como la marca
-            or_conditions = [
-                f"name_es.ilike.%{part}%",
-                f"description_es.ilike.%{part}%"
-            ]
-            q = q.or_(",".join(or_conditions))
-            
-            # Filtrar por marca específica
-            brand_res = _supabase.table("brands").select("id").ilike(
-                "name", f"%{brand}%"
-            ).limit(1).execute()
-            if brand_res.data:
-                q = q.eq("brand_id", brand_res.data[0]["id"])
-                brand_name = brand_res.data[0].get("name", brand)
-
-            r = q.limit(10).execute()
+            q = (
+                _supabase.table("products")
+                .select(
+                    "id, sku, part_number, name_es, description_es, location, "
+                    "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
+                    "compatible_models, tags, slug"
+                )
+                .eq("is_active", True)
+                .or_(f"name_es.ilike.%{part}%,description_es.ilike.%{part}%")
+                .eq("brand_id", brand_id)
+                .limit(10)
+            )
+            r = q.execute()
             if r.data:
                 sources.append("brand_product")
                 for prod in r.data:
-                    prod["brand_name"] = brand_name
-                    # Obtener imagen
-                    img_row = _supabase.table("product_images").select("url").eq(
-                        "product_id", prod["id"]
-                    ).eq("is_primary", True).maybe_single().execute()
+                    prod["brand_name"] = brand_name_resolved
+                    img_row = (
+                        _supabase.table("product_images")
+                        .select("url")
+                        .eq("product_id", prod["id"])
+                        .eq("is_primary", True)
+                        .maybe_single()
+                        .execute()
+                    )
                     if img_row.data:
                         prod["image_url"] = img_row.data["url"]
-                    
                     if prod["id"] not in results_by_id:
                         results_by_id[prod["id"]] = prod
                     else:
@@ -297,35 +321,49 @@ def search_products(parsed: dict) -> tuple[list[dict], list[str]]:
     if not results_by_id and all_terms_str.strip():
         try:
             words = [w for w in all_terms_str.split() if len(w) > 2][:5]
-            q = _supabase.table("products").select(
-                "id, sku, part_number, name_es, description_es, location, "
-                "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
-                "compatible_models, tags, slug"
-            ).eq("is_active", True)
-            or_conditions = []
+            fallback_id_sets: list[set] = []
             for w in words:
-                or_conditions.append(f"name_es.ilike.%{w}%")
-                or_conditions.append(f"sku.ilike.%{w}%")
-                or_conditions.append(f"part_number.ilike.%{w}%")
-            if or_conditions:
-                q = q.or_(",".join(or_conditions))
+                or_conditions = [
+                    f"name_es.ilike.%{w}%",
+                    f"sku.ilike.%{w}%",
+                    f"part_number.ilike.%{w}%",
+                    f"description_es.ilike.%{w}%",
+                ]
+                q = (
+                    _supabase.table("products")
+                    .select("id")
+                    .eq("is_active", True)
+                    .or_(",".join(or_conditions))
+                )
+                if brand_id:
+                    q = q.eq("brand_id", brand_id)
+                r = q.execute()
+                fallback_id_sets.append({row["id"] for row in r.data} if r.data else set())
 
-            brand_name_resolved = brand
-            if brand:
-                brand_res = _supabase.table("brands").select("id, name").ilike(
-                    "name", f"%{brand}%"
-                ).limit(1).execute()
-                if brand_res.data:
-                    q = q.eq("brand_id", brand_res.data[0]["id"])
-                    brand_name_resolved = brand_res.data[0]["name"]
+            if fallback_id_sets:
+                fallback_ids: set = fallback_id_sets[0]
+                for s in fallback_id_sets[1:]:
+                    fallback_ids &= s
 
-            r_ilike = q.limit(10).execute()
-            if r_ilike.data:
-                sources.append("ilike")
-                for product in r_ilike.data:
-                    if brand_name_resolved:
-                        product["brand_name"] = brand_name_resolved
-                    results_by_id[product["id"]] = product
+                if fallback_ids:
+                    r_ilike = (
+                        _supabase.table("products")
+                        .select(
+                            "id, sku, part_number, name_es, description_es, location, "
+                            "price_public, price_technician, price_wholesale, stock_quantity, brand_id, "
+                            "compatible_models, tags, slug"
+                        )
+                        .eq("is_active", True)
+                        .in_("id", list(fallback_ids))
+                        .limit(10)
+                        .execute()
+                    )
+                    if r_ilike.data:
+                        sources.append("ilike")
+                        for product in r_ilike.data:
+                            if brand_name_resolved:
+                                product["brand_name"] = brand_name_resolved
+                            results_by_id[product["id"]] = product
         except Exception as e:
             print(f"[supabase] Error ILIKE fallback: {e}")
 
